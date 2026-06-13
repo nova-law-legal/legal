@@ -1,13 +1,23 @@
 """
 캘린더 원본 이벤트 → 법무법인 노바 표준 양식 변환 (프로젝트의 핵심 로직)
 
+분류 기준(2026-06-13 실데이터 반영):
+  · 정식 기일  = 설명에 '사건번호' + '내용' 이 모두 있는 Lawware 기일
+                 → 상세 양식 [의뢰인(장소약칭)] 시간 내용 > 출석표기
+  · 그 외 일정 = 연차·회식·상담·접견·[보안] 등 → 제목 그대로 (시간 제목)
+  · 종일 항목  = 사건 마감(불변기일 등)은 [마감], 사건 아닌 종일(연차 등)은 [종일]
+
 출력 양식 예:
     📅 6/15(월) 오늘 일정
 
     [마감]
-    [홍길동(서울중앙지법)] 항소이유서 제출기한
+    [이돈호] 보정명령
+
+    [종일]
+    신이나 연차
 
     [고명수(강남서)] 09:30 고소인조사 > 김변님 입회
+    09:00 [보안] 기자회견
     20:00 대면상담(학익동)
 """
 
@@ -59,14 +69,14 @@ def parse_description(desc: str) -> dict:
 
 
 def is_all_day(event: dict) -> bool:
-    """시간 없는 종일(=마감/제출기한) 항목인지."""
+    """시간 없는 종일 항목인지."""
     start = event.get("start", {})
     return "date" in start and "dateTime" not in start
 
 
-def has_case(fields: dict) -> bool:
-    """사건번호가 있으면 사건 연계 일정으로 본다."""
-    return bool(fields.get("사건번호"))
+def is_full_gijil(fields: dict) -> bool:
+    """정식 기일(사건번호+내용 모두 보유)인지 → 상세 양식 대상."""
+    return bool(fields.get("사건번호") and fields.get("내용"))
 
 
 def start_hhmm(event: dict):
@@ -81,16 +91,6 @@ def start_hhmm(event: dict):
 # --------------------------------------------------------------------------- #
 # 필드 추출
 # --------------------------------------------------------------------------- #
-def extract_client(summary: str, fields: dict) -> str:
-    """의뢰인명. 제목 '[' 앞 텍스트 우선, 없으면 설명 '의뢰인:' 필드."""
-    name = ""
-    if summary and "[" in summary:
-        name = summary.split("[", 1)[0].strip()
-    if not name:
-        name = fields.get("의뢰인", "").split("(", 1)[0].strip()
-    return _shorten_clients(name)
-
-
 def _shorten_clients(name: str) -> str:
     """여러 명이면 '첫의뢰인 외 N명'."""
     if not name:
@@ -103,13 +103,19 @@ def _shorten_clients(name: str) -> str:
     return f"{parts[0]} 외 {len(parts) - 1}명"
 
 
-def extract_content(summary: str, fields: dict) -> str:
-    """일정 내용. 설명 '내용:' 우선, 없으면 제목 '[ ]' 안, 그것도 없으면 제목 전체."""
-    if fields.get("내용"):
-        return fields["내용"]
-    if summary and "[" in summary and "]" in summary:
-        return summary[summary.index("[") + 1 : summary.index("]")].strip()
-    return (summary or "").strip()
+def extract_client(summary: str, fields: dict) -> str:
+    """
+    의뢰인명. 설명 '의뢰인:' 필드 우선(불변기일 제목 '이돈호-보정명령' 깨짐 방지),
+    없으면 제목 '[' 앞 텍스트.
+    """
+    v = fields.get("의뢰인", "")
+    if v:
+        name = v.split("(", 1)[0].strip()
+        if name:
+            return _shorten_clients(name)
+    if summary and "[" in summary:
+        return _shorten_clients(summary.split("[", 1)[0].strip())
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -198,36 +204,39 @@ def attendance_text(fields: dict, loc: str, lawyers: dict) -> str:
 # --------------------------------------------------------------------------- #
 # 한 건 포맷
 # --------------------------------------------------------------------------- #
+def _simple_title(event: dict) -> str:
+    """정식 기일이 아닌 일정 → 제목 그대로(앞뒤 공백만 정리)."""
+    return (event.get("summary") or "").strip()
+
+
 def format_timed(event: dict, fields: dict, cfg: Config) -> str:
     time = start_hhmm(event)
-    content = extract_content(event.get("summary", ""), fields)
-    loc_raw = event.get("location") or fields.get("장소", "")
 
-    if has_case(fields):
+    if is_full_gijil(fields):
         client = extract_client(event.get("summary", ""), fields)
+        content = fields["내용"]
+        loc_raw = event.get("location") or fields.get("장소", "")
         loc_abbr = abbreviate_location(loc_raw, cfg.locations)
-        line = f"[{client}({loc_abbr})] {time} {content}"
+        head = f"[{client}({loc_abbr})]" if loc_abbr else f"[{client}]"
+        line = f"{head} {time} {content}"
         att = attendance_text(fields, loc_raw, cfg.lawyers)
         if att:
             line += f" > {att}"
         return line
 
-    # 사건 없는 일정: 시간 내용(장소)
-    if loc_raw:
-        return f"{time} {content}({loc_raw})"
-    return f"{time} {content}"
+    # 그 외 일정: 제목 그대로
+    return f"{time} {_simple_title(event)}"
 
 
 def format_deadline(event: dict, fields: dict, cfg: Config) -> str:
-    content = extract_content(event.get("summary", ""), fields)
-    if has_case(fields):
-        client = extract_client(event.get("summary", ""), fields)
-        loc_raw = event.get("location") or fields.get("장소", "")
-        loc_abbr = abbreviate_location(loc_raw, cfg.locations)
-        if loc_abbr:
-            return f"[{client}({loc_abbr})] {content}"
-        return f"[{client}] {content}"
-    return content
+    """정식 기일인 종일 항목([마감] 섹션)."""
+    client = extract_client(event.get("summary", ""), fields)
+    content = fields["내용"]
+    loc_raw = event.get("location") or fields.get("장소", "")
+    loc_abbr = abbreviate_location(loc_raw, cfg.locations)
+    if loc_abbr:
+        return f"[{client}({loc_abbr})] {content}"
+    return f"[{client}] {content}"
 
 
 # --------------------------------------------------------------------------- #
@@ -238,11 +247,15 @@ def format_date(d: date) -> str:
 
 
 def build_message(events: list, day: date, cfg: Config) -> str:
-    deadlines, timed = [], []
+    deadlines, allday_other, timed = [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
-        if is_all_day(ev):
+        allday = is_all_day(ev)
+        full = is_full_gijil(fields)
+        if allday and full:
             deadlines.append(format_deadline(ev, fields, cfg))
+        elif allday:
+            allday_other.append(_simple_title(ev))
         else:
             timed.append((start_hhmm(ev) or "", format_timed(ev, fields, cfg)))
 
@@ -253,10 +266,14 @@ def build_message(events: list, day: date, cfg: Config) -> str:
     if deadlines:
         body.append("[마감]")
         body.extend(deadlines)
-        body.append("")  # 마감과 시간일정 사이 빈 줄
+        body.append("")
+    if allday_other:
+        body.append("[종일]")
+        body.extend(allday_other)
+        body.append("")
     body.extend(line for _, line in timed)
 
-    if not deadlines and not timed:
+    if not (deadlines or allday_other or timed):
         body.append("오늘 일정 없음")
 
     return header + "\n\n" + "\n".join(body).strip()

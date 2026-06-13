@@ -9,7 +9,13 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from transform import Config, build_message, format_timed, parse_description  # noqa: E402
+from transform import (  # noqa: E402
+    Config,
+    build_message,
+    format_deadline,
+    format_timed,
+    parse_description,
+)
 
 CFG = Config(
     lawyers={
@@ -19,7 +25,7 @@ CFG = Config(
     locations={},
 )
 
-# 별첨 양식의 기준 샘플
+# 별첨 양식의 기준 샘플(정식 기일 = 사건번호 + 내용)
 SAMPLE_POLICE = {
     "summary": "고명수 [고소인조사]",
     "location": "서울강남경찰서",
@@ -43,18 +49,11 @@ def _line(event):
     return format_timed(event, parse_description(event.get("description", "")), CFG)
 
 
+# --------------------------------------------------------------------------- #
+# 정식 기일(상세 양식)
+# --------------------------------------------------------------------------- #
 def test_police_attendance():
     assert _line(SAMPLE_POLICE) == "[고명수(강남서)] 09:30 고소인조사 > 김변님 입회"
-
-
-def test_no_case_event():
-    ev = {
-        "summary": "대면상담",
-        "location": "학익동",
-        "start": {"dateTime": "2026-06-15T20:00:00+09:00"},
-        "description": "",
-    }
-    assert _line(ev) == "20:00 대면상담(학익동)"
 
 
 def test_court_attendance():
@@ -90,7 +89,6 @@ def test_no_attendee_line():
         "start": {"dateTime": "2026-06-15T11:00:00+09:00"},
         "description": "사건번호: 2026-000003\n장소: 수원지방법원 안산지원\n내용: 현장검증",
     }
-    # 출석변호사 줄 자체가 없음 -> '> ...' 생략, 지원명만 약칭
     assert _line(ev) == "[박의뢰(안산지원)] 11:00 현장검증"
 
 
@@ -107,19 +105,76 @@ def test_unknown_lawyer_fullname():
     assert _line(ev) == "[최의뢰(강남서)] 09:00 고소인조사 > 박건우님 입회"
 
 
-def test_full_message_with_deadline():
+def test_client_name_from_field_for_bulbyeon():
+    # 불변기일 제목은 '의뢰인-내용' 구조 → 의뢰인명은 '의뢰인' 필드에서
+    ev = {
+        "summary": "이돈호-보정명령 [불변기일]",
+        "start": {"date": "2026-06-15"},
+        "description": "사건번호: 2026-000005\n의뢰인: 이돈호(이돈호)\n내용: 보정명령",
+    }
+    assert format_deadline(ev, parse_description(ev["description"]), CFG) == "[이돈호] 보정명령"
+
+
+# --------------------------------------------------------------------------- #
+# 그 외 일정(제목 그대로)
+# --------------------------------------------------------------------------- #
+def test_simple_event_title_as_is():
+    ev = {
+        "summary": "대면상담(학익동)",
+        "start": {"dateTime": "2026-06-15T20:00:00+09:00"},
+        "description": "담당(변호사): 김태환\n담당(직원): 송무2팀",
+    }
+    assert _line(ev) == "20:00 대면상담(학익동)"
+
+
+def test_security_tag_kept():
+    ev = {
+        "summary": "[보안] 기자회견",
+        "start": {"dateTime": "2026-06-15T09:00:00+09:00"},
+        "description": "담당(변호사): 김태환",
+    }
+    assert _line(ev) == "09:00 [보안] 기자회견"
+
+
+def test_case_number_without_content_is_simple():
+    # 사건번호는 있으나 '내용'이 없음(대면접견) → 제목 그대로
+    ev = {
+        "summary": "[정다혜] 대면접견",
+        "start": {"dateTime": "2026-06-15T15:00:00+09:00"},
+        "description": "사건번호: 2026-000006\n의뢰인: 정다혜\n접견번호: 12\n담당(변호사): 김태환",
+    }
+    assert _line(ev) == "15:00 [정다혜] 대면접견"
+
+
+# --------------------------------------------------------------------------- #
+# 전체 메시지(섹션 구성)
+# --------------------------------------------------------------------------- #
+def test_full_message_sections():
     deadline = {
         "summary": "홍길동 [항소이유서 제출기한]",
         "location": "서울중앙지방법원",
         "start": {"date": "2026-06-15"},
         "description": "사건번호: 2026-000010\n장소: 서울중앙지방법원\n내용: 항소이유서 제출기한",
     }
-    msg = build_message([SAMPLE_POLICE, deadline], date(2026, 6, 15), CFG)
+    leave = {  # 사건 아닌 종일 → [종일]
+        "summary": "신이나 연차",
+        "start": {"date": "2026-06-15"},
+        "description": "담당(변호사): 신이나\n담당(직원): 운영팀",
+    }
+    security = {  # [보안] 그대로 포함
+        "summary": "[보안] 기자회견",
+        "start": {"dateTime": "2026-06-15T11:00:00+09:00"},
+        "description": "담당(변호사): 김태환",
+    }
+    msg = build_message([SAMPLE_POLICE, deadline, leave, security], date(2026, 6, 15), CFG)
     expected = (
         "📅 6/15(월) 오늘 일정\n\n"
         "[마감]\n"
         "[홍길동(서울중앙지법)] 항소이유서 제출기한\n\n"
-        "[고명수(강남서)] 09:30 고소인조사 > 김변님 입회"
+        "[종일]\n"
+        "신이나 연차\n\n"
+        "[고명수(강남서)] 09:30 고소인조사 > 김변님 입회\n"
+        "11:00 [보안] 기자회견"
     )
     assert msg == expected
 
