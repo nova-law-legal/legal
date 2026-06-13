@@ -92,9 +92,11 @@ def main():
         for team, env_key in SONGMU_TEAMS:
             filtered = [ev for ev in events if event_in_team(ev, team)]
             lead = f"[{team}]" + (f" {day_label}" if day_label else "")
-            message = build_message(filtered, day, cfg, lead=lead)
+            # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
+            # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
+            message = build_message(filtered, day, cfg, lead=lead) + "\n​"
             if args.dry_run:
-                print(message + "\n")
+                print(message)
                 continue
             webhook = os.environ.get(env_key) or default_webhook
             if not webhook:
