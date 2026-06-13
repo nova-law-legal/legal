@@ -135,6 +135,13 @@ def extract_client(summary: str, fields: dict) -> str:
     return ""
 
 
+def event_in_team(event: dict, team: str) -> bool:
+    """일정의 담당직원(또는 담당(직원))에 해당 팀 태그(예: '송무1팀')가 있는지."""
+    fields = parse_description(event.get("description", ""))
+    text = f"{fields.get('담당직원', '')} {fields.get('담당(직원)', '')}"
+    return team in text
+
+
 def gijil_type(content: str) -> str:
     """내용에서 기일종류만. '변론기일(법정 10:00)' -> '변론기일'.
     조사류(고소인조사/피의자조사/피고소인 조사/대질 등)는 '조사기일'로 통일."""
@@ -234,7 +241,7 @@ def _emit(body, line, subs):
     body.append("")  # 일정 블록 사이 빈 줄
 
 
-def build_message(events: list, day: date, cfg: Config) -> str:
+def build_message(events: list, day: date, cfg: Config, lead: str = None) -> str:
     deadlines, allday_other, timed = [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
@@ -265,4 +272,7 @@ def build_message(events: list, day: date, cfg: Config) -> str:
     text = "\n".join(body).strip()
     if not text:
         text = "일정 없음"
-    return _normalize(format_header(day) + "\n\n" + text)
+    head = format_header(day)
+    if lead:
+        head = f"{lead}\n{head}"
+    return _normalize(head + "\n\n" + text)

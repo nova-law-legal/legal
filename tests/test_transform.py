@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transform import (  # noqa: E402
     Config,
     build_message,
+    event_in_team,
     format_header,
     format_timed,
     parse_description,
@@ -243,6 +244,28 @@ def test_allday_goes_to_top():
 
 def test_empty_day():
     assert build_message([], date(2026, 6, 13), CFG) == "📅 260613 토요일\n\n일정 없음"
+
+
+def test_lead_prefix():
+    ev = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-15T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일\n담당직원: #송무1팀",
+    }
+    msg = build_message([ev], date(2026, 6, 15), CFG, lead="[송무1팀] 내일 일정")
+    assert msg.startswith("[송무1팀] 내일 일정\n📅 260615 월요일\n\n")
+
+
+def test_event_in_team():
+    gijil = {"description": "사건번호: 1\n담당직원: #송무2팀\n내용: 변론기일"}
+    nongijil = {"description": "담당(변호사): 이돈호\n담당(직원): #송무1팀"}
+    leave = {"description": "담당(직원): 손진영,#운영팀,#휴가"}
+    assert event_in_team(gijil, "송무2팀") is True
+    assert event_in_team(gijil, "송무1팀") is False
+    assert event_in_team(nongijil, "송무1팀") is True
+    assert event_in_team(leave, "송무1팀") is False
+    assert event_in_team(leave, "송무2팀") is False
 
 
 if __name__ == "__main__":
