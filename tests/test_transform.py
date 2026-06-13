@@ -74,6 +74,18 @@ def test_police_with_phone():
     assert _fmt(ev) == ("14:00 [박설] 조사기일 > 수변님", ["박설(010-7904-7204)"])
 
 
+def test_investigation_types_unified():
+    # 고소인조사 / 피고소인 조사 등 -> '조사기일'로 통일
+    for content, summary in [("고소인조사", "윤민아 [고소인조사]"), ("피고소인 조사", "정우 [피고소인 조사]")]:
+        ev = {
+            "summary": summary,
+            "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+            "description": f"사건번호: 9\n의뢰인: 윤민아\n출석변호사: ▲김태환\n내용: {content}",
+        }
+        line, _ = _fmt(ev)
+        assert line == "10:00 [윤민아] 조사기일 > 김변님", line
+
+
 def test_missing_attendee_court():
     ev = {
         "summary": "김봉주 [공판기일]",
@@ -136,7 +148,7 @@ def test_company_client_keeps_representative():
         ),
     }
     assert _fmt(ev) == (
-        "14:00 [더 주 주식회사(김주식)] 피고소인 조사 > 채변님",
+        "14:00 [더 주 주식회사(김주식)] 조사기일 > 채변님",
         ["더 주 주식회사(김주식)(010-7242-5517)"],
     )
 

@@ -136,8 +136,12 @@ def extract_client(summary: str, fields: dict) -> str:
 
 
 def gijil_type(content: str) -> str:
-    """내용에서 기일종류만. '변론기일(법정 10:00)' -> '변론기일'."""
-    return re.split(r"[(\[]", content, 1)[0].strip()
+    """내용에서 기일종류만. '변론기일(법정 10:00)' -> '변론기일'.
+    조사류(고소인조사/피의자조사/피고소인 조사/대질 등)는 '조사기일'로 통일."""
+    t = re.split(r"[(\[]", content, 1)[0].strip()
+    if "조사" in t:
+        return "조사기일"
+    return t
 
 
 def verb_for_content(content: str):
