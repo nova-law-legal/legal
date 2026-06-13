@@ -224,7 +224,7 @@ def format_deadline(event: dict, fields: dict, cfg: Config):
 # 전체 메시지 조립
 # --------------------------------------------------------------------------- #
 def format_header(d: date) -> str:
-    return f"#{d.strftime('%y%m%d')} {WEEKDAYS[d.weekday()]}요일"
+    return f"📅 {d.strftime('%y%m%d')} {WEEKDAYS[d.weekday()]}요일"
 
 
 def _emit(body, line, subs):

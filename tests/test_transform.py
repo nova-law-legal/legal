@@ -194,7 +194,7 @@ def test_non_gijil_no_lawyer():
 
 # --- 전체 메시지 / 헤더 ------------------------------------------------------ #
 def test_header():
-    assert format_header(date(2026, 6, 11)) == "#260611 목요일"
+    assert format_header(date(2026, 6, 11)) == "📅 260611 목요일"
 
 
 def test_full_message():
@@ -211,7 +211,7 @@ def test_full_message():
     }
     msg = build_message([b, a], date(2026, 6, 11), CFG)
     expected = (
-        "#260611 목요일\n\n"
+        "📅 260611 목요일\n\n"
         "10:00 [조장연] 변론기일 > 아변님\n"
         "        김포시법원 법정\n\n"
         "14:00 [엄태웅] 스마트접견 > 돈변님"
@@ -233,7 +233,7 @@ def test_allday_goes_to_top():
     }
     msg = build_message([timed, leave], date(2026, 6, 11), CFG)
     expected = (
-        "#260611 목요일\n\n"
+        "📅 260611 목요일\n\n"
         "김진우 연차\n\n"
         "10:00 [조장연] 변론기일 > 아변님\n"
         "        김포시법원 법정"
@@ -242,7 +242,7 @@ def test_allday_goes_to_top():
 
 
 def test_empty_day():
-    assert build_message([], date(2026, 6, 13), CFG) == "#260613 토요일\n\n일정 없음"
+    assert build_message([], date(2026, 6, 13), CFG) == "📅 260613 토요일\n\n일정 없음"
 
 
 if __name__ == "__main__":
@@ -257,3 +257,4 @@ if __name__ == "__main__":
             print(f"FAIL  {fn.__name__}: {e}")
     print(f"\n{len(funcs) - failed}/{len(funcs)} passed")
     sys.exit(1 if failed else 0)
+
