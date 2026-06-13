@@ -1,0 +1,11 @@
+# 비밀정보 — 절대 커밋 금지
+.env
+*.json
+!*/discovery_cache/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
