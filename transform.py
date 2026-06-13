@@ -224,7 +224,7 @@ def format_deadline(event: dict, fields: dict, cfg: Config):
 # 전체 메시지 조립
 # --------------------------------------------------------------------------- #
 def format_header(d: date) -> str:
-    return f"{d.strftime('%y%m%d')} {WEEKDAYS[d.weekday()]}요일"
+    return f"#{d.strftime('%y%m%d')} {WEEKDAYS[d.weekday()]}요일"
 
 
 def _emit(body, line, subs):
@@ -250,14 +250,17 @@ def build_message(events: list, day: date, cfg: Config) -> str:
     timed.sort(key=lambda x: x[0])
 
     body = []
+    # 시간 미특정(종일) 일정을 맨 위로: 사건 마감 + 그 외 종일
     if deadlines:
         body.append("[마감]")
         for line, subs in deadlines:
             _emit(body, line, subs)
+    if allday_other:
+        body.extend(allday_other)
+        body.append("")  # 종일과 시간일정 사이 빈 줄
+    # 시간 있는 일정(시간순)
     for _, line, subs in timed:
         _emit(body, line, subs)
-    for title in allday_other:
-        body.append(title)
 
     text = "\n".join(body).strip()
     if not text:

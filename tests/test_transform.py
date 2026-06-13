@@ -194,7 +194,7 @@ def test_non_gijil_no_lawyer():
 
 # --- 전체 메시지 / 헤더 ------------------------------------------------------ #
 def test_header():
-    assert format_header(date(2026, 6, 11)) == "260611 목요일"
+    assert format_header(date(2026, 6, 11)) == "#260611 목요일"
 
 
 def test_full_message():
@@ -211,7 +211,7 @@ def test_full_message():
     }
     msg = build_message([b, a], date(2026, 6, 11), CFG)
     expected = (
-        "260611 목요일\n\n"
+        "#260611 목요일\n\n"
         "10:00 [조장연] 변론기일 > 아변님\n"
         "        김포시법원 법정\n\n"
         "14:00 [엄태웅] 스마트접견 > 돈변님"
@@ -219,8 +219,30 @@ def test_full_message():
     assert msg == expected
 
 
+def test_allday_goes_to_top():
+    leave = {  # 시간 미특정(종일) -> 맨 위
+        "summary": "김진우 연차",
+        "start": {"date": "2026-06-11"},
+        "description": "담당(직원): 김진우,#휴가",
+    }
+    timed = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일",
+    }
+    msg = build_message([timed, leave], date(2026, 6, 11), CFG)
+    expected = (
+        "#260611 목요일\n\n"
+        "김진우 연차\n\n"
+        "10:00 [조장연] 변론기일 > 아변님\n"
+        "        김포시법원 법정"
+    )
+    assert msg == expected
+
+
 def test_empty_day():
-    assert build_message([], date(2026, 6, 13), CFG) == "260613 토요일\n\n일정 없음"
+    assert build_message([], date(2026, 6, 13), CFG) == "#260613 토요일\n\n일정 없음"
 
 
 if __name__ == "__main__":
