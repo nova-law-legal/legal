@@ -7,12 +7,13 @@
 
 필요 환경변수:
     GOOGLE_SERVICE_ACCOUNT_JSON  서비스계정 키(JSON 문자열)
-    GOOGLE_CALENDAR_ID           대상 캘린더 ID
+    GOOGLE_CALENDAR_ID           대상 캘린더 ID(들). 여러 개면 쉼표/줄바꿈/공백으로 구분
     DISCORD_WEBHOOK_URL          발송 채널 웹훅 URL
 """
 
 import argparse
 import os
+import re
 import sys
 
 from calendar_client import fetch_today_events
@@ -32,9 +33,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(CONFIG_DIR)
-    calendar_id = os.environ["GOOGLE_CALENDAR_ID"]
+    raw_ids = os.environ["GOOGLE_CALENDAR_ID"]
+    calendar_ids = [c.strip() for c in re.split(r"[,\s]+", raw_ids) if c.strip()]
 
-    events, day = fetch_today_events(calendar_id)
+    events, day = fetch_today_events(calendar_ids)
     message = build_message(events, day, cfg)
 
     if args.dry_run:
