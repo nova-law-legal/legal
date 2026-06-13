@@ -266,6 +266,9 @@ def test_event_in_team():
     assert event_in_team(nongijil, "송무1팀") is True
     assert event_in_team(leave, "송무1팀") is False
     assert event_in_team(leave, "송무2팀") is False
+    support = {"description": "구분: 상담\n담당(변호사): 김태환\n담당(직원): #상담지원팀"}
+    assert event_in_team(support, "상담지원팀") is True
+    assert event_in_team(support, "송무1팀") is False
 
 
 if __name__ == "__main__":

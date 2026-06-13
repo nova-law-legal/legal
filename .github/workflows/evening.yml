@@ -30,4 +30,5 @@ jobs:
           DISCORD_WEBHOOK_URL_SONGMU1: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU1 }}
           DISCORD_WEBHOOK_URL_SONGMU2: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU2 }}
           DISCORD_WEBHOOK_URL_SONGMU3: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU3 }}
+          DISCORD_WEBHOOK_URL_SANGDAM: ${{ secrets.DISCORD_WEBHOOK_URL_SANGDAM }}
         run: python main.py --next-day --teams

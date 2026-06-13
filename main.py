@@ -32,11 +32,12 @@ from transform import build_message, event_in_team, load_config
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
-# 송무 팀 → 팀별 전용 웹훅 환경변수(없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
-SONGMU_TEAMS = [
+# 저녁 익일 알림 — 팀별 분류 순서. (전용 웹훅 없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
+EVENING_TEAMS = [
     ("송무1팀", "DISCORD_WEBHOOK_URL_SONGMU1"),
     ("송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
     ("송무3팀", "DISCORD_WEBHOOK_URL_SONGMU3"),
+    ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
 ]
 
 
@@ -89,7 +90,7 @@ def main():
 
     # 송무 팀별 분류 발송 모드
     if args.teams:
-        for team, env_key in SONGMU_TEAMS:
+        for team, env_key in EVENING_TEAMS:
             filtered = [ev for ev in events if event_in_team(ev, team)]
             lead = f"[{team}]" + (f" {day_label}" if day_label else "")
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
