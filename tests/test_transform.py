@@ -1,6 +1,6 @@
 """
-변환 로직 회귀테스트.
-실행:  pytest tests/         또는        python tests/test_transform.py
+변환 로직 회귀테스트 (예시 양식 기준).
+실행:  python tests/test_transform.py
 """
 
 import os
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transform import (  # noqa: E402
     Config,
     build_message,
-    format_deadline,
+    format_header,
     format_timed,
     parse_description,
 )
@@ -21,167 +21,194 @@ CFG = Config(
     lawyers={
         "이돈호": "돈변", "김태환": "김변", "천기섭": "천변", "박정윤": "정윤변",
         "김정아": "아변", "김수인": "수변", "채원협": "채변", "이종원": "종변",
+        "정희소": "정변", "김윤수": "윤변", "임현진": "임변", "신이나": "신변",
+        "박건우": "건변", "이하영": "하변", "한충호": "충변", "정진실": "진변",
+        "박준호": "박변",
     },
     locations={},
 )
 
-# 별첨 양식의 기준 샘플(정식 기일 = 사건번호 + 내용)
-SAMPLE_POLICE = {
-    "summary": "고명수 [고소인조사]",
-    "location": "서울강남경찰서",
-    "start": {"dateTime": "2026-06-15T09:30:00+09:00"},
-    "description": (
-        "사건번호: 2026-011859\n"
-        "사건명: 공갈 및 전자금융거래법위반\n"
-        "의뢰인: 고명수(고명수)\n"
-        "의뢰인 연락처: 010-9129-8930\n"
-        "상대방: 이건웅외4\n"
-        "장소: 서울강남경찰서\n"
-        "담당변호사: 김태환,김수인,박건우\n"
-        "출석변호사: ▲김태환 (담당: 김태환,김수인,박건우)\n"
-        "담당직원: #송무2팀\n"
-        "내용: 고소인조사"
-    ),
-}
 
-
-def _line(event):
+def _fmt(event):
     return format_timed(event, parse_description(event.get("description", "")), CFG)
 
 
 # --------------------------------------------------------------------------- #
-# 정식 기일(상세 양식)
-# --------------------------------------------------------------------------- #
-def test_police_attendance():
-    assert _line(SAMPLE_POLICE) == "[고명수(강남서)] 09:30 고소인조사 > 김변님 입회"
-
-
-def test_court_attendance():
+def test_court_attendance_no_verb():
     ev = {
-        "summary": "홍길동 [변론기일]",
-        "location": "서울동부지방법원",
-        "start": {"dateTime": "2026-06-15T14:00:00+09:00"},
+        "summary": "조장연 [변론기일]",
+        "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
         "description": (
-            "사건번호: 2026-000001\n장소: 서울동부지방법원\n"
-            "출석변호사: ▲이돈호 (담당: 이돈호,김태환)\n내용: 변론기일"
+            "사건번호: 2025가소5592\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+            "출석변호사: ▲김정아 (담당: 김정아,김성호)\n내용: 변론기일(법정 10:00)"
         ),
     }
-    assert _line(ev) == "[홍길동(서울동부지법)] 14:00 변론기일 > 돈변님 출석"
+    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 아변님", ["김포시법원 법정"])
+
+
+def test_attendee_without_triangle():
+    # 출석변호사가 ▲ 없이 이름만 있어도 출석자로 인식
+    ev = {
+        "summary": "장주원 [공판기일]",
+        "location": "서울고등법원 서관 제502호 법정",
+        "start": {"dateTime": "2026-06-11T10:30:00+09:00"},
+        "description": (
+            "사건번호: 2026노894\n의뢰인: 장주원(이진희)\n장소: 서울고등법원 서관 제502호 법정\n"
+            "출석변호사: 박준호\n내용: 공판기일(서관 제502호 법정 10:30)"
+        ),
+    }
+    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박변님", ["서울고등법원 서관 제502호 법정"])
+
+
+def test_police_with_phone():
+    # 조사기일: 장소 없음(데이터 누락) + 의뢰인(연락처) 아랫줄
+    ev = {
+        "summary": "박설 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": (
+            "사건번호: 2026-4410\n의뢰인: 박설(박설)\n의뢰인 연락처: 010-7904-7204\n"
+            "출석변호사: ▲김수인 (담당: 천기섭,김태환)\n내용: 조사기일"
+        ),
+    }
+    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 수변님", ["박설(010-7904-7204)"])
+
+
+def test_missing_attendee_court():
+    ev = {
+        "summary": "김봉주 [공판기일]",
+        "start": {"dateTime": "2026-06-11T11:00:00+09:00"},
+        "description": "사건번호: 2026-1\n의뢰인: 김봉주\n출석변호사: \n내용: 공판기일",
+    }
+    assert _fmt(ev) == ("11:00 [김봉주] 공판기일 > 미출석", [])
 
 
 def test_missing_attendee_police():
     ev = {
-        "summary": "김의뢰 [피의자조사]",
-        "location": "경주경찰서",
-        "start": {"dateTime": "2026-06-15T10:00:00+09:00"},
-        "description": (
-            "사건번호: 2026-000002\n장소: 경주경찰서\n"
-            "출석변호사:  (담당: 김태환)\n내용: 피의자조사"
-        ),
+        "summary": "김민지 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "사건번호: 2026-2\n의뢰인: 김민지\n출석변호사: \n내용: 조사기일",
     }
-    assert _line(ev) == "[김의뢰(경주서)] 10:00 피의자조사 > 미입회"
+    assert _fmt(ev) == ("14:00 [김민지] 조사기일 > 미입회", [])
 
 
-def test_no_attendee_line():
+def test_multiple_attendees():
     ev = {
-        "summary": "박의뢰 [현장검증]",
-        "location": "수원지방법원 안산지원",
-        "start": {"dateTime": "2026-06-15T11:00:00+09:00"},
-        "description": "사건번호: 2026-000003\n장소: 수원지방법원 안산지원\n내용: 현장검증",
-    }
-    assert _line(ev) == "[박의뢰(안산지원)] 11:00 현장검증"
-
-
-def test_unknown_lawyer_fullname():
-    ev = {
-        "summary": "최의뢰 [고소인조사]",
-        "location": "서울강남경찰서",
-        "start": {"dateTime": "2026-06-15T09:00:00+09:00"},
-        "description": (
-            "사건번호: 2026-000004\n장소: 서울강남경찰서\n"
-            "출석변호사: ▲박건우 (담당: 박건우)\n내용: 고소인조사"
-        ),
-    }
-    assert _line(ev) == "[최의뢰(강남서)] 09:00 고소인조사 > 박건우님 입회"
-
-
-def test_client_name_from_field_for_bulbyeon():
-    # 불변기일 제목은 '의뢰인-내용' 구조 → 의뢰인명은 '의뢰인' 필드에서
-    ev = {
-        "summary": "이돈호-보정명령 [불변기일]",
-        "start": {"date": "2026-06-15"},
-        "description": "사건번호: 2026-000005\n의뢰인: 이돈호(이돈호)\n내용: 보정명령",
-    }
-    assert format_deadline(ev, parse_description(ev["description"]), CFG) == "[이돈호] 보정명령"
-
-
-# --------------------------------------------------------------------------- #
-# 그 외 일정(제목 그대로)
-# --------------------------------------------------------------------------- #
-def test_simple_event_title_as_is():
-    ev = {
-        "summary": "대면상담(학익동)",
-        "start": {"dateTime": "2026-06-15T20:00:00+09:00"},
-        "description": "담당(변호사): 김태환\n담당(직원): 송무2팀",
-    }
-    assert _line(ev) == "20:00 대면상담(학익동)"
-
-
-def test_security_tag_kept():
-    ev = {
-        "summary": "[보안] 기자회견",
-        "start": {"dateTime": "2026-06-15T09:00:00+09:00"},
-        "description": "담당(변호사): 김태환",
-    }
-    assert _line(ev) == "09:00 [보안] 기자회견"
-
-
-def test_case_number_without_content_is_simple():
-    # 사건번호는 있으나 '내용'이 없음(대면접견) → 제목 그대로
-    ev = {
-        "summary": "[정다혜] 대면접견",
-        "start": {"dateTime": "2026-06-15T15:00:00+09:00"},
-        "description": "사건번호: 2026-000006\n의뢰인: 정다혜\n접견번호: 12\n담당(변호사): 김태환",
-    }
-    assert _line(ev) == "15:00 [정다혜] 대면접견"
-
-
-# --------------------------------------------------------------------------- #
-# 전체 메시지(섹션 구성)
-# --------------------------------------------------------------------------- #
-def test_full_message_sections():
-    deadline = {
-        "summary": "홍길동 [항소이유서 제출기한]",
+        "summary": "신혜원 [변론기일]",
         "location": "서울중앙지방법원",
-        "start": {"date": "2026-06-15"},
-        "description": "사건번호: 2026-000010\n장소: 서울중앙지방법원\n내용: 항소이유서 제출기한",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": (
+            "사건번호: 2026-3\n의뢰인: 신혜원\n장소: 서울중앙지방법원\n"
+            "출석변호사: ▲김태환, ▲신이나\n내용: 변론기일"
+        ),
     }
-    leave = {  # 사건 아닌 종일 → [종일]
-        "summary": "신이나 연차",
-        "start": {"date": "2026-06-15"},
-        "description": "담당(변호사): 신이나\n담당(직원): 운영팀",
+    assert _fmt(ev) == ("14:00 [신혜원] 변론기일 > 김변님, 신변님", ["서울중앙지방법원"])
+
+
+def test_status_token_is_absent():
+    # 출석변호사 칸에 '공판청취' 같은 상태값 -> 미출석
+    ev = {
+        "summary": "김봉주 [공판기일]",
+        "start": {"dateTime": "2026-06-11T11:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 김봉주\n출석변호사: 공판청취\n내용: 공판기일",
     }
-    security = {  # [보안] 그대로 포함
-        "summary": "[보안] 기자회견",
-        "start": {"dateTime": "2026-06-15T11:00:00+09:00"},
-        "description": "담당(변호사): 김태환",
+    assert _fmt(ev) == ("11:00 [김봉주] 공판기일 > 미출석", [])
+
+
+def test_literal_misiphoe_token():
+    # 출석변호사 칸에 '미입회'가 직접 기재 -> '미입회님'이 아니라 '미입회'
+    ev = {
+        "summary": "김민지 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "사건번호: 2\n의뢰인: 김민지\n출석변호사: 미입회\n내용: 조사기일",
     }
-    msg = build_message([SAMPLE_POLICE, deadline, leave, security], date(2026, 6, 15), CFG)
+    assert _fmt(ev) == ("14:00 [김민지] 조사기일 > 미입회", [])
+
+
+def test_company_client_keeps_representative():
+    # 실데이터: 의뢰인 필드가 '표시명(표시명)' 형태로 중첩되어 들어옴
+    ev = {
+        "summary": "더 주 주식회사 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": (
+            "사건번호: 3\n의뢰인: 더 주 주식회사(김주식)(더 주 주식회사(김주식))\n"
+            "의뢰인 연락처: 010-7242-5517\n출석변호사: ▲채원협\n내용: 피고소인 조사"
+        ),
+    }
+    assert _fmt(ev) == (
+        "14:00 [더 주 주식회사(김주식)] 피고소인 조사 > 채변님",
+        ["더 주 주식회사(김주식)(010-7242-5517)"],
+    )
+
+
+def test_individual_client_strips_mirror():
+    ev = {
+        "summary": "장주원 [공판기일]",
+        "location": "서울고등법원",
+        "start": {"dateTime": "2026-06-11T10:30:00+09:00"},
+        "description": "사건번호: 4\n의뢰인: 장주원(이진희)\n장소: 서울고등법원\n"
+                       "출석변호사: 박준호\n내용: 공판기일",
+    }
+    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박변님", ["서울고등법원"])
+
+
+# --- 그 외 일정(담당변호사로 출석표기, 제목 그대로) ---------------------------- #
+def test_non_gijil_with_brackets_title():
+    ev = {
+        "summary": "[엄태웅] 스마트접견",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "담당(변호사): 이돈호\n담당(직원): #송무1팀",
+    }
+    assert _fmt(ev) == ("14:00 [엄태웅] 스마트접견 > 돈변님", [])
+
+
+def test_non_gijil_meeting():
+    ev = {
+        "summary": "황진주 미팅",
+        "start": {"dateTime": "2026-06-11T15:00:00+09:00"},
+        "description": "담당(변호사): 이돈호,신이나",
+    }
+    assert _fmt(ev) == ("15:00 황진주 미팅 > 돈변님, 신변님", [])
+
+
+def test_non_gijil_no_lawyer():
+    ev = {
+        "summary": "손진영 오후반반차",
+        "start": {"dateTime": "2026-06-11T16:30:00+09:00"},
+        "description": "담당(직원): 손진영,#운영팀,#휴가",
+    }
+    assert _fmt(ev) == ("16:30 손진영 오후반반차", [])
+
+
+# --- 전체 메시지 / 헤더 ------------------------------------------------------ #
+def test_header():
+    assert format_header(date(2026, 6, 11)) == "260611 목요일"
+
+
+def test_full_message():
+    a = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일(법정 10:00)",
+    }
+    b = {
+        "summary": "[엄태웅] 스마트접견",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "담당(변호사): 이돈호",
+    }
+    msg = build_message([b, a], date(2026, 6, 11), CFG)
     expected = (
-        "📅 6/15(월) 오늘 일정\n\n"
-        "[마감]\n"
-        "[홍길동(서울중앙지법)] 항소이유서 제출기한\n\n"
-        "[종일]\n"
-        "신이나 연차\n\n"
-        "[고명수(강남서)] 09:30 고소인조사 > 김변님 입회\n"
-        "11:00 [보안] 기자회견"
+        "260611 목요일\n\n"
+        "10:00 [조장연] 변론기일 > 아변님\n"
+        "        김포시법원 법정\n\n"
+        "14:00 [엄태웅] 스마트접견 > 돈변님"
     )
     assert msg == expected
 
 
 def test_empty_day():
-    msg = build_message([], date(2026, 6, 13), CFG)
-    assert msg == "📅 6/13(토) 오늘 일정\n\n오늘 일정 없음"
+    assert build_message([], date(2026, 6, 13), CFG) == "260613 토요일\n\n일정 없음"
 
 
 if __name__ == "__main__":
