@@ -117,3 +117,14 @@ python main.py --dry-run
 - 서비스계정 키(.json)와 `.env` 는 **절대 커밋 금지** (`.gitignore` 로 제외됨).
 - 비밀값은 **GitHub Secrets** 로만 보관.
 - 메시지에는 의뢰인 연락처·사건번호 등 민감정보를 **싣지 않음**(양식 항목만 전송).
+
+---
+
+## 7. 추가 문서 (docs/)
+
+- [`전체-구성도.md`](docs/전체-구성도.md) — Lawware→Discord 전체 데이터 흐름 다이어그램
+- [`외부-스케줄러-설정.md`](docs/외부-스케줄러-설정.md) — cron-job.org로 정시 알림 보내기(설정 단계별)
+- [`작업-기록.md`](docs/작업-기록.md) — 변경 이력·트러블슈팅·현재 운영 상태·체크리스트
+
+> **정시성 안내**: GitHub Actions의 `schedule:` cron은 정시 보장이 안 되어, 현재는
+> 외부 스케줄러(cron-job.org)가 `workflow_dispatch` 로 정시 트리거합니다. 자세한 내용은 위 문서 참고.
