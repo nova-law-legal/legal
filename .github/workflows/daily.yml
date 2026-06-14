@@ -1,10 +1,14 @@
 name: daily-schedule-notify
 
 on:
-  schedule:
-    # UTC 22:00 == KST 07:00 (한국은 서머타임 없음)
-    - cron: "0 22 * * *"
-  workflow_dispatch: {}   # 수동 실행(테스트) 버튼
+  # GitHub Actions의 schedule cron은 정시 보장이 안 되어(혼잡 시 수십 분~수 시간 지연)
+  # 외부 스케줄러(cron-job.org 등)가 KST 07:00 정시에 workflow_dispatch 로 트리거한다.
+  # 설정 방법: docs/외부-스케줄러-설정.md 참고.
+  # 아래 schedule 은 외부 트리거가 실패했을 때를 대비한 '지연 가능 백업'으로 남겨두되,
+  # 중복 발송이 우려되면 주석 처리한다. (현재: 외부 트리거 단독 운영을 위해 비활성화)
+  # schedule:
+  #   - cron: "0 22 * * *"   # UTC 22:00 == KST 07:00 (한국은 서머타임 없음)
+  workflow_dispatch: {}   # 외부 스케줄러 + 수동 실행 버튼
 
 jobs:
   notify:
