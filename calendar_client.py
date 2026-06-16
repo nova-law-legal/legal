@@ -58,6 +58,21 @@ def _service(info):
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+def _timed_starts_within(ev, start, end) -> bool:
+    """시간 지정 일정이 [start, end) 구간 안에서 '시작'하는지.
+
+    Google Calendar events.list 는 구간과 '겹치는' 일정을 모두 돌려준다(timeMin=종료
+    하한, timeMax=시작 상한). 그래서 전날 밤 23:30 시작이라도 종료가 자정을 넘기면
+    다음날 구간과 겹쳐 함께 조회된다. 시간 일정은 '시작한 날'에만 표시해야 하므로,
+    시작 시각이 구간 안에 들지 않으면 제외한다.
+    (종일 일정은 여러 날 연차 등이 매일 떠야 하므로 이 필터를 적용하지 않는다.)"""
+    dt = ev.get("start", {}).get("dateTime")
+    if not dt:  # 종일 일정 → 필터 대상 아님(겹침 그대로 둠)
+        return True
+    s = datetime.fromisoformat(dt).astimezone(KST)
+    return start <= s < end
+
+
 def fetch_events(sources, day=None):
     """
     여러 (자격증명, 캘린더ID목록) 소스에서 'day'(KST, 기본=오늘) 하루치 일정을 모아 반환.
@@ -88,6 +103,8 @@ def fetch_events(sources, day=None):
                     .execute()
                 )
                 for ev in resp.get("items", []):
+                    if not _timed_starts_within(ev, start, end):
+                        continue  # 자정 넘겨 겹치기만 한 전날 밤 일정 제외
                     st = ev.get("start", {})
                     key = (
                         ev.get("summary", ""),
