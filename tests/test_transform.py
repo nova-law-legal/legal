@@ -27,6 +27,11 @@ CFG = Config(
         "박준호": "박변",
     },
     locations={},
+    teams={
+        "송무1팀": ["천기섭", "박정윤", "박준호", "김정아"],
+        "송무2팀": ["김태환", "김수인"],
+        "송무3팀": ["채원협", "이종원"],
+    },
 )
 
 
@@ -165,6 +170,49 @@ def test_individual_client_strips_mirror():
     assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박변님", ["서울고등법원"])
 
 
+# --- 화상장치 -> 영상재판 (장소 대체) --------------------------------------- #
+def test_video_trial_replaces_location():
+    # '내용' 끝의 '[일방 화상장치]' 꼬리표 -> 장소 대신 '영상재판'
+    ev = {
+        "summary": "곽승우 [변론기일(제419호 법정 14:30) [일방 화상장치]]",
+        "location": "인천지방법원 제419호 법정",
+        "start": {"dateTime": "2026-06-17T14:30:00+09:00"},
+        "description": (
+            "사건번호: 2025가단214056\n의뢰인: 곽승우(곽승우)\n장소: 인천지방법원 제419호 법정\n"
+            "출석변호사: ▲이종원\n내용: 변론기일(제419호 법정 14:30) [일방 화상장치]"
+        ),
+    }
+    assert _fmt(ev) == ("14:30 [곽승우] 변론기일 > 종변님", ["영상재판"])
+
+
+def test_video_trial_investigation_keeps_phone():
+    # 화상장치라도 조사기일 의뢰인(연락처) 아랫줄은 유지, 장소만 영상재판으로 대체
+    ev = {
+        "summary": "박설 [조사기일 [주문 화상장치]]",
+        "location": "서울중앙지방법원",
+        "start": {"dateTime": "2026-06-17T14:00:00+09:00"},
+        "description": (
+            "사건번호: 1\n의뢰인: 박설(박설)\n의뢰인 연락처: 010-7904-7204\n장소: 서울중앙지방법원\n"
+            "출석변호사: ▲김수인\n내용: 조사기일 [주문 화상장치]"
+        ),
+    }
+    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 수변님", ["영상재판", "박설(010-7904-7204)"])
+
+
+def test_no_video_keyword_keeps_location():
+    # 키워드 없으면 기존대로 실제 장소 표시(회귀)
+    ev = {
+        "summary": "조장연 [변론기일]",
+        "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-17T10:00:00+09:00"},
+        "description": (
+            "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+            "출석변호사: ▲김정아\n내용: 변론기일(법정 10:00)"
+        ),
+    }
+    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 아변님", ["김포시법원 법정"])
+
+
 # --- 그 외 일정(담당변호사로 출석표기, 제목 그대로) ---------------------------- #
 def test_non_gijil_with_brackets_title():
     ev = {
@@ -269,6 +317,75 @@ def test_event_in_team():
     support = {"description": "구분: 상담\n담당(변호사): 김태환\n담당(직원): #상담지원팀"}
     assert event_in_team(support, "상담지원팀") is True
     assert event_in_team(support, "송무1팀") is False
+
+
+def test_event_in_team_cross_team_attendance():
+    # 송무1팀 사건인데 송무2팀 김수인이 대신 출석 -> 송무1팀(사건)·송무2팀(출석) 모두 포함
+    ev = {
+        "description": "사건번호: 1\n출석변호사: 김수인\n담당직원: #송무1팀\n내용: 조사기일",
+    }
+    assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당직원 태그
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 출석변호사 소속
+    assert event_in_team(ev, "송무3팀", CFG.teams) is False
+    # teams 미전달 시(구버전 호출)에는 출석변호사 기반 포함이 동작하지 않음
+    assert event_in_team(ev, "송무2팀") is False
+
+    # 출석변호사가 빈칸(미입회)이면 어느 팀도 출석 기준으로 끌어오지 않음
+    empty = {"description": "사건번호: 2\n출석변호사: \n담당직원: #송무3팀\n내용: 조사기일"}
+    assert event_in_team(empty, "송무3팀", CFG.teams) is True   # 담당직원 태그만
+    assert event_in_team(empty, "송무2팀", CFG.teams) is False
+
+    # 그 외 일정은 담당(변호사) 기준으로 출석팀 판정
+    nongijil = {"description": "담당(변호사): 채원협\n담당(직원): #송무1팀"}
+    assert event_in_team(nongijil, "송무3팀", CFG.teams) is True   # 채원협=송무3팀
+
+
+def test_solo_damdang_fallback_when_attendee_blank():
+    # 실제 2026-06-16 14:00 김현규 케이스: 출석변호사 미기재 + 담당변호사 단독(김수인)
+    ev = {
+        "summary": "김현규 [조사기일]",
+        "start": {"dateTime": "2026-06-16T14:00:00+09:00"},
+        "description": "사건번호: 2026-1720\n의뢰인: 김현규(김현규)\n"
+                       "담당변호사: 김수인\n내용: 조사기일",
+    }
+    assert _fmt(ev) == ("14:00 [김현규] 조사기일 > 수변님", [])
+
+    # 출석변호사 칸이 공백이어도 동일하게 담당변호사 단독 폴백
+    ev2 = {
+        "summary": "김봉주 [공판기일]",
+        "start": {"dateTime": "2026-06-11T11:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 김봉주\n담당변호사: 천기섭\n"
+                       "출석변호사: \n내용: 공판기일",
+    }
+    assert _fmt(ev2) == ("11:00 [김봉주] 공판기일 > 천변님", [])
+
+
+def test_no_fallback_when_multiple_damdang_or_explicit_misiphoe():
+    # 담당변호사 2명이면 누가 출석인지 불명확 -> 폴백하지 않고 미입회
+    multi = {
+        "summary": "김민지 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "사건번호: 2\n담당변호사: 김수인,천기섭\n출석변호사: \n내용: 조사기일",
+    }
+    assert _fmt(multi) == ("14:00 [김민지] 조사기일 > 미입회", [])
+
+    # 출석변호사 칸에 '미입회' 명시 -> 담당변호사 단독이어도 미입회 유지
+    explicit = {
+        "summary": "김민지 [조사기일]",
+        "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
+        "description": "사건번호: 3\n담당변호사: 김수인\n출석변호사: 미입회\n내용: 조사기일",
+    }
+    assert _fmt(explicit) == ("14:00 [김민지] 조사기일 > 미입회", [])
+
+
+def test_solo_damdang_fallback_drives_cross_team():
+    # 송무1팀 사건이고 출석변호사 미기재 + 담당변호사 단독 김수인(송무2팀)
+    # -> 폴백된 출석자 기준으로 송무2팀에도 포함
+    ev = {
+        "description": "사건번호: 1\n담당변호사: 김수인\n담당직원: #송무1팀\n내용: 조사기일",
+    }
+    assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당직원 태그
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 폴백 출석자=김수인
 
 
 if __name__ == "__main__":

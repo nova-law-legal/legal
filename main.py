@@ -91,7 +91,7 @@ def main():
     # 송무 팀별 분류 발송 모드
     if args.teams:
         for team, env_key in EVENING_TEAMS:
-            filtered = [ev for ev in events if event_in_team(ev, team)]
+            filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
             lead = f"[{team}]" + (f" {day_label}" if day_label else "")
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
