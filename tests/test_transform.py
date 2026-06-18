@@ -259,7 +259,7 @@ def test_bigo_irrelevant_hidden():
             "출석변호사: ▲청취대리(권)\n내용: 선고기일(제352호 법정 10:00)\n비고: 복대리"
         ),
     }
-    assert _fmt(ev) == ("10:00 [박선영] 선고기일 > 청취대리님", ["부산지방법원 제352호 법정"])
+    assert _fmt(ev) == ("10:00 [박선영] 선고기일 > 청취대리", ["부산지방법원 제352호 법정"])
 
 
 def test_bigo_submission_on_deadline():
@@ -292,7 +292,7 @@ def test_seongo_listen_proxy_unified():
             ),
         }
         line, _ = _fmt(ev)
-        assert line == "10:00 [박선영] 선고기일 > 청취대리님", f"{raw} -> {line}"
+        assert line == "10:00 [박선영] 선고기일 > 청취대리", f"{raw} -> {line}"
 
 
 def test_listen_proxy_only_for_seongo():

@@ -43,6 +43,8 @@ NON_ATTEND = {"미입회", "미출석", "불출석", "불참", "공판청취", "
 
 # 선고기일 한정: 복대리·청취대리·선고청취대리·선고청취 등 대리출석 표기를 '청취대리'로 일원화.
 LISTEN_PROXY_TERMS = ("선고청취대리", "청취대리", "선고청취", "복대리")
+# 사람이 아니라 출석방식 라벨이므로 '님'을 붙이지 않는 출석표기.
+NO_HONORIFIC = {"청취대리"}
 
 # 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
@@ -249,7 +251,10 @@ def _normalize_listen_proxy(names, gtype):
 
 
 def _format_attendees(names, lawyers) -> str:
-    return ", ".join(lawyers.get(n, n) + "님" for n in names)
+    def one(n):
+        label = lawyers.get(n, n)
+        return label if n in NO_HONORIFIC else label + "님"  # 청취대리 등은 '님' 없이
+    return ", ".join(one(n) for n in names)
 
 
 def classify_bigo(text: str):
