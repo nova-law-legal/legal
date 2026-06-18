@@ -41,9 +41,20 @@ INDENT = "        "  # 아랫줄(장소 등) 들여쓰기
 # 출석변호사 칸에 들어오지만 실제 변호사 출석이 아닌 상태값 → 출석자 아님(미출석/미입회 처리)
 NON_ATTEND = {"미입회", "미출석", "불출석", "불참", "공판청취", "청취", "방청", "참관"}
 
+# 선고기일 한정: 복대리·청취대리·선고청취대리·선고청취 등 대리출석 표기를 '청취대리'로 일원화.
+LISTEN_PROXY_TERMS = ("선고청취대리", "청취대리", "선고청취", "복대리")
+
 # 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
 LEAVE_KEYWORDS = ("휴가", "반차", "휴무", "연차")
+
+# '비고' 노출 정책: 장소 또는 제출/이행 여부에 관한 내용만 알림에 띄우고,
+# 그 외(복대리·메모 등)는 숨긴다. 키워드는 운영 중 이 표만 고치면 반영된다.
+BIGO_SUBMISSION_KW = ("제출", "접수", "발송", "납부", "이행", "체결", "완료", "미제출")
+BIGO_LOCATION_KW = (
+    "법원", "지원", "지청", "검찰청", "경찰서", "법정", "조정실",
+    "센터", "등기소", "공단", "사무소", "청사", "구치소", "교도소",
+)
 
 # 원문자(①②③ …) → 일반 숫자
 _CIRCLED = {chr(0x2460 + i): str(i + 1) for i in range(20)}
@@ -224,8 +235,44 @@ def _gijil_attendees(fields):
     return names or []
 
 
+def _normalize_listen_proxy(names, gtype):
+    """선고기일에 한해 복대리/청취대리/선고청취대리/선고청취 표기를 '청취대리'로 일원화.
+    (다른 기일종류는 그대로 둔다.) 중복은 순서 유지하며 1건으로 정리."""
+    if gtype != "선고기일":
+        return names
+    out = []
+    for n in names:
+        norm = "청취대리" if any(term in n for term in LISTEN_PROXY_TERMS) else n
+        if norm not in out:
+            out.append(norm)
+    return out
+
+
 def _format_attendees(names, lawyers) -> str:
     return ", ".join(lawyers.get(n, n) + "님" for n in names)
+
+
+def classify_bigo(text: str):
+    """'비고' 내용이 알림에 띄울 만한지 분류.
+    · 제출/이행 여부(제출완료·체결완료 등)면 '제출'
+    · 장소(검찰청 조정실·법원 등 기관명/전화번호)면 '장소'
+    · 그 외(복대리·단순메모 등)면 None.
+    제출·장소 키워드가 함께 있으면 '제출'을 우선한다(예: '법원에 제출완료')."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if any(k in t for k in BIGO_SUBMISSION_KW):
+        return "제출"
+    if any(k in t for k in BIGO_LOCATION_KW) or re.search(r"\d{2,4}-\d{3,4}-\d{4}", t):
+        return "장소"
+    return None
+
+
+def _bigo_sub(fields: dict):
+    """비고가 장소/제출 성격이면 원문 그대로(아랫줄용), 아니면 None.
+    표시 형식은 라벨 없이 원문 한 줄. 장소성 비고는 기존 '장소' 줄과 병기된다."""
+    raw = fields.get("비고", "")
+    return raw.strip() if classify_bigo(raw) else None
 
 
 def _location_sub(event: dict, fields: dict, cfg: "Config") -> str:
@@ -250,7 +297,7 @@ def format_timed(event: dict, fields: dict, cfg: Config):
         gtype = gijil_type(content)
         verb = verb_for_content(content)
 
-        names = _gijil_attendees(fields)
+        names = _normalize_listen_proxy(_gijil_attendees(fields), gtype)
         if names:
             att = " > " + _format_attendees(names, cfg.lawyers)
         elif verb:
@@ -264,6 +311,9 @@ def format_timed(event: dict, fields: dict, cfg: Config):
         loc = _location_sub(event, fields, cfg)
         if loc:
             subs.append(loc)
+        bigo = _bigo_sub(fields)  # 장소/제출 성격 비고만 노출
+        if bigo:
+            subs.append(bigo)
         if verb == "입회":  # 조사기일 등 -> 의뢰인 연락처
             phone = fields.get("의뢰인 연락처", "").strip()
             if phone:
@@ -274,7 +324,8 @@ def format_timed(event: dict, fields: dict, cfg: Config):
     title = (event.get("summary") or "").strip()
     names = _attendee_names(fields.get("담당(변호사)"))
     att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
-    return f"{time} {title}{att}", []
+    bigo = _bigo_sub(fields)
+    return f"{time} {title}{att}", ([bigo] if bigo else [])
 
 
 def format_deadline(event: dict, fields: dict, cfg: Config):
@@ -286,6 +337,9 @@ def format_deadline(event: dict, fields: dict, cfg: Config):
     loc = _location_sub(event, fields, cfg)
     if loc:
         subs.append(loc)
+    bigo = _bigo_sub(fields)  # 장소/제출 성격 비고만 노출
+    if bigo:
+        subs.append(bigo)
     return line, subs
 
 
