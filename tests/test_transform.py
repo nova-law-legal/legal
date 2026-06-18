@@ -261,6 +261,7 @@ def test_full_message():
     msg = build_message([b, a], date(2026, 6, 11), CFG)
     expected = (
         "📅 260611 목요일\n\n"
+        "[일정]\n"
         "10:00 [조장연] 변론기일 > 아변님\n"
         "        김포시법원 법정\n\n"
         "14:00 [엄태웅] 스마트접견 > 돈변님"
@@ -269,7 +270,35 @@ def test_full_message():
 
 
 def test_allday_goes_to_top():
-    leave = {  # 시간 미특정(종일) -> 맨 위
+    allday = {  # 종일(비-기일·비-휴무) -> [일정]에서 시간일정 위
+        "summary": "전사 워크숍",
+        "start": {"date": "2026-06-11"},
+        "description": "담당(직원): 김진우",
+    }
+    timed = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일",
+    }
+    msg = build_message([timed, allday], date(2026, 6, 11), CFG)
+    expected = (
+        "📅 260611 목요일\n\n"
+        "[일정]\n"
+        "전사 워크숍\n\n"
+        "10:00 [조장연] 변론기일 > 아변님\n"
+        "        김포시법원 법정"
+    )
+    assert msg == expected
+
+
+def test_leave_section_at_bottom():
+    leave_half = {  # 시간 있는 반차 -> [휴무]
+        "summary": "오바다 오후반차",
+        "start": {"dateTime": "2026-06-11T13:00:00+09:00"},
+        "description": "",
+    }
+    leave_allday = {  # 종일 연차 -> [휴무]
         "summary": "김진우 연차",
         "start": {"date": "2026-06-11"},
         "description": "담당(직원): 김진우,#휴가",
@@ -280,18 +309,52 @@ def test_allday_goes_to_top():
         "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
                        "출석변호사: ▲김정아\n내용: 변론기일",
     }
-    msg = build_message([timed, leave], date(2026, 6, 11), CFG)
+    msg = build_message([leave_half, timed, leave_allday], date(2026, 6, 11), CFG)
     expected = (
         "📅 260611 목요일\n\n"
-        "김진우 연차\n\n"
+        "[일정]\n"
         "10:00 [조장연] 변론기일 > 아변님\n"
-        "        김포시법원 법정"
+        "        김포시법원 법정\n\n"
+        "[휴무]\n"
+        "오바다 오후반차\n"
+        "김진우 연차"
     )
     assert msg == expected
 
 
+def test_leave_only_day():
+    leave = {"summary": "김진우 연차", "start": {"date": "2026-06-11"}, "description": ""}
+    msg = build_message([leave], date(2026, 6, 11), CFG)
+    assert msg == "📅 260611 목요일\n\n[휴무]\n김진우 연차"
+
+
 def test_empty_day():
     assert build_message([], date(2026, 6, 13), CFG) == "📅 260613 토요일\n\n일정 없음"
+
+
+def test_deadline_then_schedule_sections():
+    deadline = {  # 종일 + 사건번호+내용 -> [기한]
+        "summary": "홍길동 [제출기한]",
+        "start": {"date": "2026-06-11"},
+        "description": "사건번호: 1\n의뢰인: 홍길동(홍길동)\n장소: 서울중앙지방법원\n내용: 항소이유서 제출기한",
+    }
+    timed = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일",
+    }
+    msg = build_message([timed, deadline], date(2026, 6, 11), CFG)
+    expected = (
+        "📅 260611 목요일\n\n"
+        "[기한]\n"
+        "[홍길동] 항소이유서 제출기한\n"
+        "        서울중앙지방법원\n\n"
+        "[일정]\n"
+        "10:00 [조장연] 변론기일 > 아변님\n"
+        "        김포시법원 법정"
+    )
+    assert msg == expected
 
 
 def test_lead_prefix():
@@ -302,7 +365,7 @@ def test_lead_prefix():
                        "출석변호사: ▲김정아\n내용: 변론기일\n담당직원: #송무1팀",
     }
     msg = build_message([ev], date(2026, 6, 15), CFG, lead="[송무1팀] 내일 일정")
-    assert msg.startswith("[송무1팀] 내일 일정\n📅 260615 월요일\n\n")
+    assert msg.startswith("📅 [송무1팀] 내일 일정(260615, 월)\n\n")
 
 
 def test_event_in_team():

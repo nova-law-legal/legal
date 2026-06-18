@@ -23,7 +23,8 @@
   · 장소 등    = 아랫줄 들여쓰기, 약칭 안 함(원본 그대로). 조사기일은 의뢰인(연락처)도.
   · 정식 기일  = 설명에 '사건번호'+'내용' 모두 보유 → 위 상세 양식
   · 그 외 일정 = 제목 그대로 + 담당(변호사)로 "> 약칭님"
-  · 종일 사건 마감(불변기일 등)은 [마감] 섹션
+  · 섹션 순서  = 맨 위 [기한](종일 사건 기한·불변기일 등) → [일정](그 외 일정) →
+                 맨 아래 [휴무](휴가·반차·연차 등 부재 일정)
 """
 
 import os
@@ -39,6 +40,10 @@ INDENT = "        "  # 아랫줄(장소 등) 들여쓰기
 
 # 출석변호사 칸에 들어오지만 실제 변호사 출석이 아닌 상태값 → 출석자 아님(미출석/미입회 처리)
 NON_ATTEND = {"미입회", "미출석", "불출석", "불참", "공판청취", "청취", "방청", "참관"}
+
+# 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
+# ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
+LEAVE_KEYWORDS = ("휴가", "반차", "휴무", "연차")
 
 # 원문자(①②③ …) → 일반 숫자
 _CIRCLED = {chr(0x2460 + i): str(i + 1) for i in range(20)}
@@ -88,6 +93,13 @@ def parse_description(desc: str) -> dict:
 def is_all_day(event: dict) -> bool:
     start = event.get("start", {})
     return "date" in start and "dateTime" not in start
+
+
+def is_leave(event: dict) -> bool:
+    """휴가·반차·반반차·휴무·연차 등 부재 일정인지(제목 키워드 기준).
+    종일/시간 여부와 무관하게 제목에 키워드가 있으면 [휴무]로 분류한다."""
+    title = event.get("summary") or ""
+    return any(k in title for k in LEAVE_KEYWORDS)
 
 
 def is_full_gijil(fields: dict) -> bool:
@@ -266,7 +278,7 @@ def format_timed(event: dict, fields: dict, cfg: Config):
 
 
 def format_deadline(event: dict, fields: dict, cfg: Config):
-    """정식 기일인 종일 항목([마감] 섹션) -> (메인줄, [아랫줄들])."""
+    """정식 기일인 종일 항목([기한] 섹션) -> (메인줄, [아랫줄들])."""
     client = extract_client(event.get("summary", ""), fields)
     gtype = gijil_type(fields["내용"])
     line = f"[{client}] {gtype}"
@@ -284,6 +296,11 @@ def format_header(d: date) -> str:
     return f"📅 {d.strftime('%y%m%d')} {WEEKDAYS[d.weekday()]}요일"
 
 
+def format_header_lead(lead: str, d: date) -> str:
+    """팀별/익일 알림용 한 줄 머리말. 예: '📅 [송무1팀] 내일 일정(260615, 월)'."""
+    return f"📅 {lead}({d.strftime('%y%m%d')}, {WEEKDAYS[d.weekday()]})"
+
+
 def _emit(body, line, subs):
     body.append(line)
     for s in subs:
@@ -292,14 +309,17 @@ def _emit(body, line, subs):
 
 
 def build_message(events: list, day: date, cfg: Config, lead: str = None) -> str:
-    deadlines, allday_other, timed = [], [], []
+    deadlines, allday_other, timed, leaves = [], [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
-        if is_all_day(ev):
+        summary = (ev.get("summary") or "").strip()
+        if is_leave(ev):  # 휴가·반차·연차 등 → [휴무]
+            leaves.append(summary)
+        elif is_all_day(ev):
             if is_full_gijil(fields):
                 deadlines.append(format_deadline(ev, fields, cfg))
             else:
-                allday_other.append((ev.get("summary") or "").strip())
+                allday_other.append(summary)
         else:
             line, subs = format_timed(ev, fields, cfg)
             timed.append((start_hhmm(ev) or "", line, subs))
@@ -307,22 +327,26 @@ def build_message(events: list, day: date, cfg: Config, lead: str = None) -> str
     timed.sort(key=lambda x: x[0])
 
     body = []
-    # 시간 미특정(종일) 일정을 맨 위로: 사건 마감 + 그 외 종일
+    # [기한]: 정식 기일의 종일 항목(제출기한·불변기일 등)을 맨 위로
     if deadlines:
-        body.append("[마감]")
+        body.append("[기한]")
         for line, subs in deadlines:
             _emit(body, line, subs)
-    if allday_other:
-        body.extend(allday_other)
-        body.append("")  # 종일과 시간일정 사이 빈 줄
-    # 시간 있는 일정(시간순)
-    for _, line, subs in timed:
-        _emit(body, line, subs)
+    # [일정]: 그 외 종일(연차 등 제외) + 시간 일정. 둘 중 하나라도 있으면 라벨을 붙인다.
+    if allday_other or timed:
+        body.append("[일정]")
+        if allday_other:
+            body.extend(allday_other)
+            body.append("")  # 종일과 시간일정 사이 빈 줄
+        for _, line, subs in timed:  # 시간 있는 일정(시간순)
+            _emit(body, line, subs)
+    # [휴무]: 휴가·반차·연차 등 부재 일정을 맨 아래에 모아 표기
+    if leaves:
+        body.append("[휴무]")
+        body.extend(leaves)
 
     text = "\n".join(body).strip()
     if not text:
         text = "일정 없음"
-    head = format_header(day)
-    if lead:
-        head = f"{lead}\n{head}"
+    head = format_header_lead(lead, day) if lead else format_header(day)
     return _normalize(head + "\n\n" + text)
