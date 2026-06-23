@@ -58,6 +58,10 @@ BIGO_LOCATION_KW = (
     "센터", "등기소", "공단", "사무소", "청사", "구치소", "교도소",
 )
 
+# 상담/미팅 의뢰인 전화번호, 접견 기관(구치소·교도소) 추출용 패턴
+PHONE_RE = re.compile(r"\d{2,4}-\d{3,4}-\d{4}")
+DETENTION_RE = re.compile(r"[가-힣A-Za-z0-9]+(?:교도소|구치소)")
+
 # 원문자(①②③ …) → 일반 숫자
 _CIRCLED = {chr(0x2460 + i): str(i + 1) for i in range(20)}
 
@@ -291,6 +295,82 @@ def _location_sub(event: dict, fields: dict, cfg: "Config") -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 상담/미팅·접견 (정식 기일이 아니지만 의뢰인·담당변호사가 있는 일정)
+# --------------------------------------------------------------------------- #
+def is_meeting(event: dict) -> bool:
+    """'[회의]'로 시작하는 방문상담·대면미팅 등 회의성 일정."""
+    return (event.get("summary") or "").lstrip().startswith("[회의]")
+
+
+def is_visit(event: dict) -> bool:
+    """제목에 '접견'이 들어가는 교정시설 접견 일정(화상/대면/스마트접견 등)."""
+    return "접견" in (event.get("summary") or "")
+
+
+def _meeting_phone(fields: dict, desc: str) -> str:
+    """상담/미팅 의뢰인 전화. '의뢰인연락처' 필드 우선, 없으면 설명 본문의
+    'key: value' 가 아닌 줄(맨 윗줄에 번호만 달랑 적힌 경우)에서 번호를 찾는다."""
+    raw = fields.get("의뢰인연락처") or fields.get("의뢰인 연락처") or ""
+    m = PHONE_RE.search(raw)
+    if m:
+        return m.group(0)
+    for line in (desc or "").splitlines():
+        if ":" in line:  # 구조화된 필드 줄(담당직원 등)은 의뢰인 번호가 아님
+            continue
+        m = PHONE_RE.search(line)
+        if m:
+            return m.group(0)
+    return ""
+
+
+def format_meeting(event: dict, fields: dict, cfg: Config, time: str):
+    """'[회의] (구분) [의뢰인]내용' → '[의뢰인] 내용 > 담당변호사님' + 장소·전화 아랫줄."""
+    s = (event.get("summary") or "").strip()
+    s = s[len("[회의]"):].strip() if s.startswith("[회의]") else s
+    s = re.sub(r"^\([^)]*\)\s*", "", s)  # 선두 '(구분)' 라벨 제거(장소는 '구분' 필드에서)
+    m = re.match(r"\[([^\]]*)\]\s*(.*)", s)  # 선두 '[의뢰인]' 추출
+    client, content = (m.group(1).strip(), m.group(2).strip()) if m else ("", s)
+
+    names = _attendee_names(fields.get("담당(변호사)"))
+    att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
+    head = f"[{client}] {content}" if client else content
+
+    subs = []
+    loc = (event.get("location") or fields.get("장소") or fields.get("구분") or "").strip()
+    if loc:
+        subs.append(cfg.locations.get(loc, loc))
+    bigo = _bigo_sub(fields)
+    if bigo:
+        subs.append(bigo)
+    phone = _meeting_phone(fields, event.get("description", ""))
+    if phone and client:
+        subs.append(f"{client}({phone})")
+    return f"{time} {head}{att}".rstrip(), subs
+
+
+def format_visit(event: dict, fields: dict, cfg: Config, time: str):
+    """접견 일정 → 제목 그대로 + 담당변호사. 설명/제목에 구치소·교도소 이름이 있으면
+    그 기관을 장소 아랫줄로 표기하고(제목 괄호와 중복되면 괄호는 제거), 없으면 생략."""
+    title = (event.get("summary") or "").strip()
+    desc = event.get("description", "") or ""
+    m = DETENTION_RE.search(title) or DETENTION_RE.search(desc)
+    place = m.group(0) if m else ""
+    if place and f"({place})" in title:  # 제목의 '(서울남부교도소)' 중복 제거
+        title = title.replace(f"({place})", "").strip()
+
+    names = _attendee_names(fields.get("담당(변호사)"))
+    att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
+
+    subs = []
+    if place:
+        subs.append(cfg.locations.get(place, place))
+    bigo = _bigo_sub(fields)
+    if bigo:
+        subs.append(bigo)
+    return f"{time} {title}{att}", subs
+
+
+# --------------------------------------------------------------------------- #
 # 한 건 포맷  ->  (메인줄, [아랫줄들])
 # --------------------------------------------------------------------------- #
 def format_timed(event: dict, fields: dict, cfg: Config):
@@ -324,6 +404,11 @@ def format_timed(event: dict, fields: dict, cfg: Config):
             if phone:
                 subs.append(f"{client}({phone})")
         return line, subs
+
+    if is_meeting(event):  # [회의] 방문상담·대면미팅 → 의뢰인 머리말 + 장소·전화
+        return format_meeting(event, fields, cfg, time)
+    if is_visit(event):  # 접견 → 구치소·교도소 이름 있으면 장소로 표기
+        return format_visit(event, fields, cfg, time)
 
     # 그 외 일정: 제목 그대로 + 담당(변호사)로 출석표기
     title = (event.get("summary") or "").strip()
