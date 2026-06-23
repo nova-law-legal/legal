@@ -50,14 +50,6 @@ NO_HONORIFIC = {"청취대리"}
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
 LEAVE_KEYWORDS = ("휴가", "반차", "휴무", "연차")
 
-# '비고' 노출 정책: 장소 또는 제출/이행 여부에 관한 내용만 알림에 띄우고,
-# 그 외(복대리·메모 등)는 숨긴다. 키워드는 운영 중 이 표만 고치면 반영된다.
-BIGO_SUBMISSION_KW = ("제출", "접수", "발송", "납부", "이행", "체결", "완료", "미제출")
-BIGO_LOCATION_KW = (
-    "법원", "지원", "지청", "검찰청", "경찰서", "법정", "조정실",
-    "센터", "등기소", "공단", "사무소", "청사", "구치소", "교도소",
-)
-
 # 상담/미팅 의뢰인 전화번호, 접견 기관(구치소·교도소) 추출용 패턴
 PHONE_RE = re.compile(r"\d{2,4}-\d{3,4}-\d{4}")
 DETENTION_RE = re.compile(r"[가-힣A-Za-z0-9]+(?:교도소|구치소)")
@@ -261,27 +253,11 @@ def _format_attendees(names, lawyers) -> str:
     return ", ".join(one(n) for n in names)
 
 
-def classify_bigo(text: str):
-    """'비고' 내용이 알림에 띄울 만한지 분류.
-    · 제출/이행 여부(제출완료·체결완료 등)면 '제출'
-    · 장소(검찰청 조정실·법원 등 기관명/전화번호)면 '장소'
-    · 그 외(복대리·단순메모 등)면 None.
-    제출·장소 키워드가 함께 있으면 '제출'을 우선한다(예: '법원에 제출완료')."""
-    t = (text or "").strip()
-    if not t:
-        return None
-    if any(k in t for k in BIGO_SUBMISSION_KW):
-        return "제출"
-    if any(k in t for k in BIGO_LOCATION_KW) or re.search(r"\d{2,4}-\d{3,4}-\d{4}", t):
-        return "장소"
-    return None
-
-
 def _bigo_sub(fields: dict):
-    """비고가 장소/제출 성격이면 원문 그대로(아랫줄용), 아니면 None.
-    표시 형식은 라벨 없이 원문 한 줄. 장소성 비고는 기존 '장소' 줄과 병기된다."""
-    raw = fields.get("비고", "")
-    return raw.strip() if classify_bigo(raw) else None
+    """비고에 내용이 있으면 '비고 : 원문' 한 줄로(없으면 None). 필터 없이 그대로 노출하며,
+    항상 맨 아랫줄에 둔다. (※ 비고 칸 내용이 그대로 알림에 나가므로 민감정보 입력 금지)"""
+    raw = fields.get("비고", "").strip()
+    return f"비고 : {raw}" if raw else None
 
 
 def _location_sub(event: dict, fields: dict, cfg: "Config") -> str:
@@ -339,12 +315,12 @@ def format_meeting(event: dict, fields: dict, cfg: Config, time: str):
     loc = (event.get("location") or fields.get("장소") or fields.get("구분") or "").strip()
     if loc:
         subs.append(cfg.locations.get(loc, loc))
-    bigo = _bigo_sub(fields)
-    if bigo:
-        subs.append(bigo)
     phone = _meeting_phone(fields, event.get("description", ""))
     if phone and client:
         subs.append(f"{client}({phone})")
+    bigo = _bigo_sub(fields)  # 비고는 항상 맨 아랫줄
+    if bigo:
+        subs.append(bigo)
     return f"{time} {head}{att}".rstrip(), subs
 
 
@@ -396,13 +372,13 @@ def format_timed(event: dict, fields: dict, cfg: Config):
         loc = _location_sub(event, fields, cfg)
         if loc:
             subs.append(loc)
-        bigo = _bigo_sub(fields)  # 장소/제출 성격 비고만 노출
-        if bigo:
-            subs.append(bigo)
         if verb == "입회":  # 조사기일 등 -> 의뢰인 연락처
             phone = fields.get("의뢰인 연락처", "").strip()
             if phone:
                 subs.append(f"{client}({phone})")
+        bigo = _bigo_sub(fields)  # 비고는 항상 맨 아랫줄
+        if bigo:
+            subs.append(bigo)
         return line, subs
 
     if is_meeting(event):  # [회의] 방문상담·대면미팅 → 의뢰인 머리말 + 장소·전화

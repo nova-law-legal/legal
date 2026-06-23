@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transform import (  # noqa: E402
     Config,
     build_message,
-    classify_bigo,
     event_in_team,
     format_deadline,
     format_header,
@@ -215,20 +214,9 @@ def test_no_video_keyword_keeps_location():
     assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 아변님", ["김포시법원 법정"])
 
 
-# --- 비고: 장소/제출 여부만 노출 -------------------------------------------- #
-def test_classify_bigo():
-    assert classify_bigo("제출완료") == "제출"
-    assert classify_bigo("260612 보증계약 체결완료") == "제출"
-    assert classify_bigo("서울남부지방검찰청 형사조정실 02-3219-4586") == "장소"
-    assert classify_bigo("대중교통 이용 02-1234-5678") == "장소"  # 전화번호 패턴
-    assert classify_bigo("복대리") is None
-    assert classify_bigo("") is None
-    # 제출·장소 키워드 동시 -> 제출 우선
-    assert classify_bigo("법원에 제출완료") == "제출"
-
-
-def test_bigo_location_shown_alongside_place():
-    # 장소성 비고는 기존 '장소' 줄과 병기(라벨 없이 원문 한 줄)
+# --- 비고: 필터 없이 '비고 : 원문' 으로 맨 아랫줄에 노출 ----------------------- #
+def test_bigo_shown_below_place_and_phone():
+    # 비고는 장소·연락처 아래(맨 끝)에 '비고 : 원문' 으로 표시
     ev = {
         "summary": "오승곤 [조사기일]",
         "start": {"dateTime": "2026-06-19T10:30:00+09:00"},
@@ -242,14 +230,14 @@ def test_bigo_location_shown_alongside_place():
         "10:30 [오승곤] 조사기일 > 박변님",
         [
             "남양주북부경찰서 수사과 지능범죄수사팀",
-            "서울남부지방검찰청 형사조정실 02-3219-4586",
             "오승곤(010-3257-8715)",
+            "비고 : 서울남부지방검찰청 형사조정실 02-3219-4586",
         ],
     )
 
 
-def test_bigo_irrelevant_hidden():
-    # 장소·제출이 아닌 비고(복대리)는 숨김
+def test_bigo_always_shown():
+    # 필터 폐지: 복대리 같은 메모도 그대로 '비고 :' 로 노출
     ev = {
         "summary": "박선영 [선고기일]",
         "location": "부산지방법원 제352호 법정",
@@ -259,23 +247,26 @@ def test_bigo_irrelevant_hidden():
             "출석변호사: ▲청취대리(권)\n내용: 선고기일(제352호 법정 10:00)\n비고: 복대리"
         ),
     }
-    assert _fmt(ev) == ("10:00 [박선영] 선고기일 > 청취대리", ["부산지방법원 제352호 법정"])
+    assert _fmt(ev) == (
+        "10:00 [박선영] 선고기일 > 청취대리",
+        ["부산지방법원 제352호 법정", "비고 : 복대리"],
+    )
 
 
-def test_bigo_submission_on_deadline():
-    # 종일 제출기한([기한])에 '제출완료' 비고 -> 장소 아래 병기
+def test_bigo_on_deadline():
+    # 종일 제출기한([기한])의 비고 -> 장소 아래 '비고 :' 로 표시 (예: 항소X)
     ev = {
-        "summary": "박설 [보정명령]",
-        "start": {"date": "2026-06-19"},
+        "summary": "남기태외1 [상소제기]",
+        "start": {"date": "2026-06-24"},
         "description": (
-            "사건번호: 2026가소247541\n의뢰인: 박설(박설)\n장소: 서울중앙지방법원\n"
-            "내용: 보정명령\n비고: 제출완료"
+            "사건번호: 2025가단13014\n의뢰인: 남기태외1(남기태외1)\n장소: 서울서부지방법원\n"
+            "내용: 상소제기(민사)\n비고: 항소X"
         ),
     }
     fields = parse_description(ev["description"])
     assert format_deadline(ev, fields, CFG) == (
-        "[박설] 보정명령",
-        ["서울중앙지방법원", "제출완료"],
+        "[남기태외1] 상소제기",
+        ["서울서부지방법원", "비고 : 항소X"],
     )
 
 
