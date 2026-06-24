@@ -257,13 +257,19 @@ def _format_attendees(names, lawyers) -> str:
     return ", ".join(one(n) for n in names)
 
 
-def _visit_number_sub(fields: dict):
+def _visit_number_sub(fields: dict, desc: str = ""):
     """접견 예약번호가 있으면 '접견번호 : 원문' 한 줄로(없으면 None).
-    실데이터 키는 '스마트접견예약번호' 등 변형이 있어, '접견'+'번호'가 모두 든
-    필드 키를 폭넓게 인식한다(스마트접견·화상접견 공통)."""
+    ① 구조화된 필드: 키에 '접견'+'번호'가 든 'key: value'('스마트접견예약번호' 등 변형 포함).
+    ② 콜론이 없어 필드로 안 잡히는 경우('접견번호 007504'처럼 띄어쓰기): 설명 본문에서
+       '접견'·'번호'가 함께 든 줄을 찾아 그 뒤의 번호(숫자/영숫자)를 직접 인식."""
     for key, val in fields.items():
         if "접견" in key and "번호" in key and val.strip():
             return f"접견번호 : {val.strip()}"
+    for line in (desc or "").splitlines():
+        if "접견" in line and "번호" in line:
+            m = re.search(r"번호\s*[:\-]?\s*([0-9A-Za-z\-]+)", line)
+            if m:
+                return f"접견번호 : {m.group(1)}"
     return None
 
 
@@ -355,7 +361,7 @@ def format_visit(event: dict, fields: dict, cfg: Config, time: str):
     subs = []
     if place:
         subs.append(cfg.locations.get(place, place))
-    visit_no = _visit_number_sub(fields)  # 접견 예약번호(있으면 장소 아래)
+    visit_no = _visit_number_sub(fields, desc)  # 접견 예약번호(있으면 장소 아래)
     if visit_no:
         subs.append(visit_no)
     bigo = _bigo_sub(fields)  # 비고는 항상 맨 아랫줄

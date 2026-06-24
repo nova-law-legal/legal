@@ -325,6 +325,19 @@ def test_visit_shows_reservation_number():
     assert _fmt(ev) == ("11:00 [이상열] 스마트접견 > 김변님", ["접견번호 : 002317"])
 
 
+def test_visit_number_no_colon():
+    # 콜론 없이 '접견번호 007504'처럼 띄어쓰기로 적힌 경우도 인식(필드로 안 잡히는 케이스).
+    ev = {
+        "summary": "[장주원] 스마트접견(돈변님)",
+        "start": {"dateTime": "2026-06-25T11:00:00+09:00"},
+        "description": (
+            "접견번호 007504\n노션접견디비 > 접견예약증 업로드되어있습니다\n"
+            "담당(변호사): 이돈호\n담당(직원): #송무1팀,#상담지원팀"
+        ),
+    }
+    assert _fmt(ev) == ("11:00 [장주원] 스마트접견(돈변님) > 돈변님", ["접견번호 : 007504"])
+
+
 def test_visit_number_below_place_above_bigo():
     # 장소(교도소)·접견번호·비고가 모두 있으면 장소 → 접견번호 → 비고 순
     ev = {
