@@ -435,6 +435,12 @@ def format_header_lead(lead: str, d: date) -> str:
     return f"📅 {lead}({d.strftime('%y%m%d')}, {WEEKDAYS[d.weekday()]})"
 
 
+def format_header_weekend(team: str, d: date) -> str:
+    """금요일 저녁 송무팀 묶음 알림의 '일자별' 머리말.
+    예: '📅 [송무3팀] 토요일 일정(260627)'. (요일은 풀네임, 괄호엔 날짜만)"""
+    return f"📅 [{team}] {WEEKDAYS[d.weekday()]}요일 일정({d.strftime('%y%m%d')})"
+
+
 def _emit(body, line, subs):
     body.append(line)
     for s in subs:
@@ -442,7 +448,7 @@ def _emit(body, line, subs):
     body.append("")  # 일정 블록 사이 빈 줄
 
 
-def build_message(events: list, day: date, cfg: Config, lead: str = None) -> str:
+def build_message(events: list, day: date, cfg: Config, lead: str = None, head: str = None) -> str:
     deadlines, allday_other, timed, leaves = [], [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
@@ -482,5 +488,7 @@ def build_message(events: list, day: date, cfg: Config, lead: str = None) -> str
     text = "\n".join(body).strip()
     if not text:
         text = "일정 없음"
-    head = format_header_lead(lead, day) if lead else format_header(day)
+    # head 직접 지정(금요일 묶음의 일자별 머리말 등) 우선, 없으면 lead/기본 머리말.
+    if head is None:
+        head = format_header_lead(lead, day) if lead else format_header(day)
     return _normalize(head + "\n\n" + text)

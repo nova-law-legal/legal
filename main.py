@@ -28,7 +28,7 @@ except ImportError:
 
 from calendar_client import KST, fetch_events, sources_from_env
 from discord_sender import send
-from transform import build_message, event_in_team, load_config
+from transform import build_message, event_in_team, format_header_weekend, load_config
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
@@ -39,6 +39,10 @@ EVENING_TEAMS = [
     ("송무3팀", "DISCORD_WEBHOOK_URL_SONGMU3"),
     ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
 ]
+
+# 금요일 저녁(익일=토요일) 묶음 대상 팀 — 토·일·월 3일치를 한 메시지로 보낸다.
+# (상담지원팀은 제외하고 평소대로 익일 하루치만 발송)
+WEEKEND_BUNDLE_TEAMS = {"송무1팀", "송무2팀", "송무3팀"}
 
 
 def main():
@@ -90,12 +94,31 @@ def main():
 
     # 송무 팀별 분류 발송 모드
     if args.teams:
+        # 금요일 저녁(익일=토요일) → 송무1/2/3팀은 토·일·월 3일치를 한 메시지로 묶는다.
+        # 묶음 대상이면 토·일·월 각 날짜의 일정을 미리 한 번씩만 조회해 둔다.
+        bundle = day.weekday() == 5  # 대상일이 토요일 == 금요일 저녁 실행
+        bundle_days, bundle_events = [], {}
+        if bundle:
+            bundle_days = [day + timedelta(days=i) for i in range(3)]  # 토·일·월
+            bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
+
         for team, env_key in EVENING_TEAMS:
-            filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
-            lead = f"[{team}]" + (f" {day_label}" if day_label else "")
+            if bundle and team in WEEKEND_BUNDLE_TEAMS:
+                # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다(일정 없는 날도 항상 표시).
+                blocks, total = [], 0
+                for d in bundle_days:
+                    fd = [ev for ev in bundle_events[d] if event_in_team(ev, team, cfg.teams)]
+                    total += len(fd)
+                    blocks.append(build_message(fd, d, cfg, head=format_header_weekend(team, d)))
+                message = "\n\n".join(blocks) + "\n​"
+                count_desc = f"토·일·월 {total}건"
+            else:
+                filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
+                lead = f"[{team}]" + (f" {day_label}" if day_label else "")
+                message = build_message(filtered, day, cfg, lead=lead) + "\n​"
+                count_desc = f"{len(filtered)}건"
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
-            message = build_message(filtered, day, cfg, lead=lead) + "\n​"
             if args.dry_run:
                 print(message)
                 continue
@@ -103,7 +126,7 @@ def main():
             if not webhook:
                 sys.exit(f"{team} 웹훅 미설정 (DISCORD_WEBHOOK_URL{'/' + env_key})")
             send(webhook, message)
-            print(f"[{team}] 전송 완료 ({day}, {len(filtered)}건)")
+            print(f"[{team}] 전송 완료 ({day}, {count_desc})")
         return
 
     # 단일 메시지(아침=오늘 전체, --next-day=내일 전체)

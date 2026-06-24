@@ -15,6 +15,7 @@ from transform import (  # noqa: E402
     event_in_team,
     format_deadline,
     format_header,
+    format_header_weekend,
     format_timed,
     parse_description,
 )
@@ -565,6 +566,20 @@ def test_solo_damdang_fallback_drives_cross_team():
     }
     assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당직원 태그
     assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 폴백 출석자=김수인
+
+
+def test_weekend_bundle_header():
+    # 금요일 저녁 묶음 머리말: 요일 풀네임 + 괄호엔 날짜만(요일 약칭 없음).
+    assert format_header_weekend("송무3팀", date(2026, 6, 27)) == "📅 [송무3팀] 토요일 일정(260627)"
+    assert format_header_weekend("송무1팀", date(2026, 6, 28)) == "📅 [송무1팀] 일요일 일정(260628)"
+    assert format_header_weekend("송무2팀", date(2026, 6, 29)) == "📅 [송무2팀] 월요일 일정(260629)"
+
+
+def test_build_message_head_override():
+    # head 직접 지정 시 그 머리말을 그대로 쓰고, 일정 없으면 '일정 없음' 본문.
+    head = format_header_weekend("송무3팀", date(2026, 6, 28))
+    msg = build_message([], date(2026, 6, 28), CFG, head=head)
+    assert msg == "📅 [송무3팀] 일요일 일정(260628)\n\n일정 없음"
 
 
 if __name__ == "__main__":
