@@ -253,6 +253,16 @@ def _format_attendees(names, lawyers) -> str:
     return ", ".join(one(n) for n in names)
 
 
+def _visit_number_sub(fields: dict):
+    """접견 예약번호가 있으면 '접견번호 : 원문' 한 줄로(없으면 None).
+    실데이터 키는 '스마트접견예약번호' 등 변형이 있어, '접견'+'번호'가 모두 든
+    필드 키를 폭넓게 인식한다(스마트접견·화상접견 공통)."""
+    for key, val in fields.items():
+        if "접견" in key and "번호" in key and val.strip():
+            return f"접견번호 : {val.strip()}"
+    return None
+
+
 def _bigo_sub(fields: dict):
     """비고에 내용이 있으면 '비고 : 원문' 한 줄로(없으면 None). 필터 없이 그대로 노출하며,
     항상 맨 아랫줄에 둔다. (※ 비고 칸 내용이 그대로 알림에 나가므로 민감정보 입력 금지)"""
@@ -326,7 +336,8 @@ def format_meeting(event: dict, fields: dict, cfg: Config, time: str):
 
 def format_visit(event: dict, fields: dict, cfg: Config, time: str):
     """접견 일정 → 제목 그대로 + 담당변호사. 설명/제목에 구치소·교도소 이름이 있으면
-    그 기관을 장소 아랫줄로 표기하고(제목 괄호와 중복되면 괄호는 제거), 없으면 생략."""
+    그 기관을 장소 아랫줄로 표기하고(제목 괄호와 중복되면 괄호는 제거), 없으면 생략.
+    설명에 접견 예약번호(스마트접견예약번호 등)가 있으면 '접견번호 : …' 아랫줄을 덧붙인다."""
     title = (event.get("summary") or "").strip()
     desc = event.get("description", "") or ""
     m = DETENTION_RE.search(title) or DETENTION_RE.search(desc)
@@ -340,7 +351,10 @@ def format_visit(event: dict, fields: dict, cfg: Config, time: str):
     subs = []
     if place:
         subs.append(cfg.locations.get(place, place))
-    bigo = _bigo_sub(fields)
+    visit_no = _visit_number_sub(fields)  # 접견 예약번호(있으면 장소 아래)
+    if visit_no:
+        subs.append(visit_no)
+    bigo = _bigo_sub(fields)  # 비고는 항상 맨 아랫줄
     if bigo:
         subs.append(bigo)
     return f"{time} {title}{att}", subs

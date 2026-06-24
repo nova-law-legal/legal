@@ -311,6 +311,34 @@ def test_non_gijil_with_brackets_title():
     assert _fmt(ev) == ("14:00 [엄태웅] 스마트접견 > 돈변님", [])
 
 
+def test_visit_shows_reservation_number():
+    # 스마트/화상 접견: 설명의 접견 예약번호를 '접견번호 :' 아랫줄로 노출
+    ev = {
+        "summary": "[이상열] 스마트접견",
+        "start": {"dateTime": "2026-06-24T11:00:00+09:00"},
+        "description": (
+            "사건번호: 2026고단100798\n의뢰인: 이상열\n"
+            "스마트접견예약번호: 002317\n담당(변호사): 김태환\n담당(직원): #송무2팀"
+        ),
+    }
+    assert _fmt(ev) == ("11:00 [이상열] 스마트접견 > 김변님", ["접견번호 : 002317"])
+
+
+def test_visit_number_below_place_above_bigo():
+    # 장소(교도소)·접견번호·비고가 모두 있으면 장소 → 접견번호 → 비고 순
+    ev = {
+        "summary": "[김갑동] 화상접견 (서울남부교도소)",
+        "start": {"dateTime": "2026-06-24T14:00:00+09:00"},
+        "description": (
+            "의뢰인: 김갑동\n접견예약번호: 12345\n담당(변호사): 이돈호\n비고: 통역 필요"
+        ),
+    }
+    assert _fmt(ev) == (
+        "14:00 [김갑동] 화상접견 > 돈변님",
+        ["서울남부교도소", "접견번호 : 12345", "비고 : 통역 필요"],
+    )
+
+
 def test_non_gijil_meeting():
     ev = {
         "summary": "황진주 미팅",
