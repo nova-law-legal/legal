@@ -568,6 +568,24 @@ def test_solo_damdang_fallback_drives_cross_team():
     assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 폴백 출석자=김수인
 
 
+def test_result_non_attend_overrides_listed_attorney():
+    # 출석변호사 칸에 (출석 예정이던) 이름이 있어도, 결과가 '미출석'이면 미출석으로 표기.
+    ev = {
+        "summary": "<미출석> 배수현 [공판기일]",
+        "location": "서울중앙지방법원 서관 526호 법정",
+        "start": {"dateTime": "2026-06-25T11:20:00+09:00"},
+        "description": (
+            "사건번호: 2025고단6173\n의뢰인: 배수현(배수현)\n장소: 서울중앙지방법원 서관 526호 법정\n"
+            "담당변호사: 김태환,김수인\n출석변호사: ▲이돈호 (담당: 김태환,김수인)\n"
+            "담당직원: #송무2팀\n내용: 공판기일(서관 526호 법정 11:20)\n결과: 미출석"
+        ),
+    }
+    assert _fmt(ev) == ("11:20 [배수현] 공판기일 > 미출석", ["서울중앙지방법원 서관 526호 법정"])
+    # 결과가 진행결과(변론종결 등)면 영향 없음 — 출석변호사 그대로.
+    ev2 = dict(ev, description=ev["description"].replace("결과: 미출석", "결과: 변론종결"))
+    assert _fmt(ev2) == ("11:20 [배수현] 공판기일 > 돈변님", ["서울중앙지방법원 서관 526호 법정"])
+
+
 def test_weekend_bundle_header():
     # 금요일 저녁 묶음 머리말: 요일 풀네임 + 괄호엔 날짜만(요일 약칭 없음).
     assert format_header_weekend("송무3팀", date(2026, 6, 27)) == "📅 [송무3팀] 토요일 일정(260627)"
