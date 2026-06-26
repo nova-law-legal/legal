@@ -14,11 +14,13 @@ Google Calendar 읽기 (서비스 계정, 읽기 전용).
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 KST = ZoneInfo("Asia/Seoul")
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
@@ -73,11 +75,38 @@ def _timed_starts_within(ev, start, end) -> bool:
     return start <= s < end
 
 
+def _list_events_one(service, cal_id, start, end):
+    """한 캘린더의 [start, end) 구간 일정(raw)을 페이지네이션으로 모두 모아 반환."""
+    out, page_token = [], None
+    while True:
+        resp = (
+            service.events()
+            .list(
+                calendarId=cal_id,
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        out.extend(resp.get("items", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return out
+
+
 def fetch_events(sources, day=None):
     """
     여러 (자격증명, 캘린더ID목록) 소스에서 'day'(KST, 기본=오늘) 하루치 일정을 모아 반환.
     여러 캘린더에 겹친 일정은 제목+시작+장소 기준으로 한 번만.
     반환: (events: list[dict], day: date)
+
+    캘린더 하나가 삭제/권한해제(404·403) 등으로 조회에 실패해도 그 캘린더만 건너뛰고
+    경고를 남긴 뒤 나머지는 계속 모은다(한 캘린더 때문에 전체 발송이 멈추지 않게).
+    서비스계정 초기화 실패도 해당 계정만 건너뛴다.
     """
     if day is None:
         day = datetime.now(KST).date()
@@ -86,38 +115,40 @@ def fetch_events(sources, day=None):
 
     items, seen = [], set()
     for info, cal_ids in sources:
-        service = _service(info)
+        try:
+            service = _service(info)
+        except Exception as e:  # 자격증명 JSON 파손 등 → 그 계정만 건너뜀
+            print(f"[경고] 서비스계정 초기화 실패(건너뜀): {e}", file=sys.stderr)
+            continue
         for cal_id in cal_ids:
-            page_token = None
-            while True:
-                resp = (
-                    service.events()
-                    .list(
-                        calendarId=cal_id,
-                        timeMin=start.isoformat(),
-                        timeMax=end.isoformat(),
-                        singleEvents=True,
-                        orderBy="startTime",
-                        pageToken=page_token,
-                    )
-                    .execute()
+            try:
+                raw = _list_events_one(service, cal_id, start, end)
+            except HttpError as e:
+                status = getattr(getattr(e, "resp", None), "status", "?")
+                print(
+                    f"[경고] 캘린더 조회 실패(건너뜀): {cal_id} → HTTP {status}",
+                    file=sys.stderr,
                 )
-                for ev in resp.get("items", []):
-                    if not _timed_starts_within(ev, start, end):
-                        continue  # 자정 넘겨 겹치기만 한 전날 밤 일정 제외
-                    st = ev.get("start", {})
-                    key = (
-                        ev.get("summary", ""),
-                        st.get("dateTime") or st.get("date"),
-                        ev.get("location", ""),
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    items.append(ev)
-                page_token = resp.get("nextPageToken")
-                if not page_token:
-                    break
+                continue
+            except Exception as e:  # 네트워크 등 예기치 못한 오류도 그 캘린더만 건너뜀
+                print(
+                    f"[경고] 캘린더 조회 실패(건너뜀): {cal_id} → {e}",
+                    file=sys.stderr,
+                )
+                continue
+            for ev in raw:
+                if not _timed_starts_within(ev, start, end):
+                    continue  # 자정 넘겨 겹치기만 한 전날 밤 일정 제외
+                st = ev.get("start", {})
+                key = (
+                    ev.get("summary", ""),
+                    st.get("dateTime") or st.get("date"),
+                    ev.get("location", ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(ev)
 
     return items, day
 

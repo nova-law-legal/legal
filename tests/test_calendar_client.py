@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from calendar_client import KST, _timed_starts_within  # noqa: E402
+import calendar_client  # noqa: E402
+from calendar_client import KST, _timed_starts_within, fetch_events  # noqa: E402
+from googleapiclient.errors import HttpError  # noqa: E402
 
 
 def _window(d: date):
@@ -73,6 +75,62 @@ check(
     "UTC표기_KST변환_제외",
     _timed_starts_within(timed("2026-06-16T14:30:00Z"), start, end) is False,
 )
+
+
+# ── 캘린더 하나가 죽어도(404 등) 나머지는 계속 모으는지 ──────────────
+class _FakeReq:
+    def __init__(self, result=None, exc=None):
+        self._result, self._exc = result, exc
+
+    def execute(self):
+        if self._exc:
+            raise self._exc
+        return self._result
+
+
+class _FakeEvents:
+    """cal_id -> items(list) 또는 raise할 Exception 을 매핑한 가짜 events()."""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def list(self, calendarId, **kw):
+        v = self.mapping[calendarId]
+        if isinstance(v, Exception):
+            return _FakeReq(exc=v)
+        return _FakeReq(result={"items": v})
+
+
+class _FakeService:
+    def __init__(self, mapping):
+        self._ev = _FakeEvents(mapping)
+
+    def events(self):
+        return self._ev
+
+
+def _http_error(status):
+    resp = type("R", (), {"status": status, "reason": "Not Found"})()
+    return HttpError(resp, b"{}")
+
+
+# 6/17 당일 10:00 시작 일정(윈도우 안에 듦)
+_good_ev = {"summary": "정상기일", "start": {"dateTime": "2026-06-17T10:00:00+09:00"}}
+_mapping = {
+    "dead@group.calendar.google.com": _http_error(404),  # 삭제된 캘린더
+    "live@group.calendar.google.com": [_good_ev],         # 정상 캘린더
+}
+_orig_service = calendar_client._service
+calendar_client._service = lambda info: _FakeService(_mapping)
+try:
+    evs, _ = fetch_events(
+        [(object(), ["dead@group.calendar.google.com", "live@group.calendar.google.com"])],
+        day=date(2026, 6, 17),
+    )
+finally:
+    calendar_client._service = _orig_service
+
+check("죽은캘린더_건너뛰고_나머지수집", [e["summary"] for e in evs] == ["정상기일"])
 
 
 print(f"\n{PASS}/{PASS + FAIL} passed")
