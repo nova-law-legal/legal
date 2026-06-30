@@ -110,12 +110,12 @@ def main():
                     fd = [ev for ev in bundle_events[d] if event_in_team(ev, team, cfg.teams)]
                     total += len(fd)
                     blocks.append(build_message(fd, d, cfg, head=format_header_weekend(team, d)))
-                message = "\n\n".join(blocks) + "\n​"
+                message = "@everyone\n" + "\n\n".join(blocks) + "\n​"
                 count_desc = f"토·일·월 {total}건"
             else:
                 filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
                 lead = f"[{team}]" + (f" {day_label}" if day_label else "")
-                message = build_message(filtered, day, cfg, lead=lead) + "\n​"
+                message = build_message(filtered, day, cfg, lead=lead, mention=True) + "\n​"
                 count_desc = f"{len(filtered)}건"
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
@@ -130,7 +130,7 @@ def main():
         return
 
     # 단일 메시지(아침=오늘 전체, --next-day=내일 전체)
-    message = build_message(events, day, cfg, lead=day_label)
+    message = build_message(events, day, cfg, lead=day_label, mention=True)
     if args.dry_run:
         print(message)
         return

@@ -458,7 +458,8 @@ def _emit(body, line, subs):
     body.append("")  # 일정 블록 사이 빈 줄
 
 
-def build_message(events: list, day: date, cfg: Config, lead: str = None, head: str = None) -> str:
+def build_message(events: list, day: date, cfg: Config, lead: str = None, head: str = None,
+                  mention: bool = False) -> str:
     deadlines, allday_other, timed, leaves = [], [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
@@ -499,6 +500,16 @@ def build_message(events: list, day: date, cfg: Config, lead: str = None, head: 
     if not text:
         text = "일정 없음"
     # head 직접 지정(금요일 묶음의 일자별 머리말 등) 우선, 없으면 lead/기본 머리말.
+    # 오전 단일 알림은 plain 머리말(inline), 그 외 팀별/익일 알림은 lead 머리말(block).
+    inline = head is None and lead is None
     if head is None:
         head = format_header_lead(lead, day) if lead else format_header(day)
-    return _normalize(head + "\n\n" + text)
+    if mention:
+        if inline:  # 오전: '📅 … 화요일 @everyone' (한 줄) + 빈 줄 + 본문
+            head += " @everyone"
+            sep = "\n\n"
+        else:  # 오후/익일: 머리말 아래 줄에 '@everyone', 곧바로 본문
+            sep = "\n@everyone\n"
+    else:
+        sep = "\n\n"
+    return _normalize(head + sep + text)

@@ -498,6 +498,29 @@ def test_lead_prefix():
     assert msg.startswith("📅 [송무1팀] 내일 일정(260615, 월)\n\n")
 
 
+def test_mention_morning_inline():
+    # 오전 단일 알림: 머리말 끝에 ' @everyone'(한 줄) + 빈 줄 + 본문
+    deadline = {
+        "summary": "홍길동 [제출기한]",
+        "start": {"date": "2026-06-11"},
+        "description": "사건번호: 1\n의뢰인: 홍길동(홍길동)\n내용: 항소이유서 제출기한",
+    }
+    msg = build_message([deadline], date(2026, 6, 11), CFG, mention=True)
+    assert msg.startswith("📅 260611 목요일 @everyone\n\n[기한]\n")
+
+
+def test_mention_afternoon_block():
+    # 오후/익일 알림: 머리말 아랫줄 '@everyone' 곧바로 본문(빈 줄 없음)
+    ev = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-15T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일\n담당직원: #송무1팀",
+    }
+    msg = build_message([ev], date(2026, 6, 15), CFG, lead="[송무1팀] 내일 일정", mention=True)
+    assert msg.startswith("📅 [송무1팀] 내일 일정(260615, 월)\n@everyone\n[일정]\n")
+
+
 def test_event_in_team():
     gijil = {"description": "사건번호: 1\n담당직원: #송무2팀\n내용: 변론기일"}
     nongijil = {"description": "담당(변호사): 이돈호\n담당(직원): #송무1팀"}
