@@ -1,8 +1,19 @@
 name: ci
 
 on:
+  # 테스트에 영향 주는 변경(파이썬 코드·의존성·이 워크플로 자체)만 CI 실행.
+  # 패치노트/문서/설정 yaml만 바뀐 커밋은 굳이 돌리지 않아 불필요한 run 누적을 줄인다.
   push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "requirements.txt"
+      - ".github/workflows/ci.yml"
   pull_request:
+    paths:
+      - "**.py"
+      - "requirements.txt"
+      - ".github/workflows/ci.yml"
   workflow_dispatch: {}
 
 jobs:
