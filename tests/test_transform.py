@@ -487,6 +487,31 @@ def test_deadline_then_schedule_sections():
     assert msg == expected
 
 
+def test_include_deadlines_false_omits_deadline_section():
+    # 상담지원팀 익일 알림 등: include_deadlines=False면 [기한] 섹션을 통째로 생략,
+    # 시간 일정은 그대로 [일정]에 남는다.
+    deadline = {
+        "summary": "홍길동 [제출기한]",
+        "start": {"date": "2026-06-11"},
+        "description": "사건번호: 1\n의뢰인: 홍길동(홍길동)\n장소: 서울중앙지방법원\n내용: 항소이유서 제출기한",
+    }
+    timed = {
+        "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+        "start": {"dateTime": "2026-06-11T10:00:00+09:00"},
+        "description": "사건번호: 1\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                       "출석변호사: ▲김정아\n내용: 변론기일",
+    }
+    msg = build_message([timed, deadline], date(2026, 6, 11), CFG, include_deadlines=False)
+    assert "[기한]" not in msg
+    assert "항소이유서 제출기한" not in msg
+    assert msg == (
+        "📅 260611 목요일\n\n"
+        "[일정]\n"
+        "10:00 [조장연] 변론기일 > 아변님\n"
+        "        김포시법원 법정"
+    )
+
+
 def test_lead_prefix():
     ev = {
         "summary": "조장연 [변론기일]", "location": "김포시법원 법정",

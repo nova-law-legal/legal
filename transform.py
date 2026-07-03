@@ -459,7 +459,7 @@ def _emit(body, line, subs):
 
 
 def build_message(events: list, day: date, cfg: Config, lead: str = None, head: str = None,
-                  mention: bool = False) -> str:
+                  mention: bool = False, include_deadlines: bool = True) -> str:
     deadlines, allday_other, timed, leaves = [], [], [], []
     for ev in events:
         fields = parse_description(ev.get("description", ""))
@@ -478,8 +478,9 @@ def build_message(events: list, day: date, cfg: Config, lead: str = None, head: 
     timed.sort(key=lambda x: x[0])
 
     body = []
-    # [기한]: 정식 기일의 종일 항목(제출기한·불변기일 등)을 맨 위로
-    if deadlines:
+    # [기한]: 정식 기일의 종일 항목(제출기한·불변기일 등)을 맨 위로.
+    # (상담지원팀 익일 알림 등 include_deadlines=False면 이 섹션을 통째로 생략)
+    if deadlines and include_deadlines:
         body.append("[기한]")
         for line, subs in deadlines:
             _emit(body, line, subs)

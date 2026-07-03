@@ -115,7 +115,11 @@ def main():
             else:
                 filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
                 lead = f"[{team}]" + (f" {day_label}" if day_label else "")
-                message = build_message(filtered, day, cfg, lead=lead, mention=True) + "\n​"
+                # 상담지원팀 익일 알림은 [기한](종일 제출기한 등) 섹션을 넣지 않는다.
+                message = build_message(
+                    filtered, day, cfg, lead=lead, mention=True,
+                    include_deadlines=(team != "상담지원팀"),
+                ) + "\n​"
                 count_desc = f"{len(filtered)}건"
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
