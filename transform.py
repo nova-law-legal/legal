@@ -5,24 +5,25 @@
 
     260611 목요일
 
-    10:00 [조장연] 변론기일 > 아변님
+    10:00 [조장연] 변론기일 > 김정아
             김포시법원 법정
 
-    14:00 [박설] 조사기일 > 수변님
+    14:00 [박설] 조사기일 > 김수인
             박설(010-7904-7204)
 
     11:00 [김봉주] 공판기일 > 미출석
 
-    14:00 [엄태웅] 스마트접견 > 돈변님
+    14:00 [엄태웅] 스마트접견 > 이돈호
 
 규칙 요약:
   · 줄 형식    = "시간 [의뢰인] 기일종류 > 출석표기"  (대괄호는 의뢰인에만)
-  · 출석표기   = 출석변호사 있으면 "> 약칭님"(동사 없음). 출석변호사 미기재면 담당변호사가
-                 1명일 때 그 담당변호사로 표기, 아니면 "> 미출석"(법원)/"> 미입회"(경찰·검찰).
+  · 출석표기   = 출석변호사 있으면 "> 실명"(약칭·'님' 없이 이름 그대로, 동사 없음).
+                 출석변호사 미기재면 담당변호사가 1명일 때 그 담당변호사로 표기,
+                 아니면 "> 미출석"(법원)/"> 미입회"(경찰·검찰).
                  (출석변호사 칸에 '미입회' 등을 명시하면 폴백 없이 그대로 미입회)
   · 장소 등    = 아랫줄 들여쓰기, 약칭 안 함(원본 그대로). 조사기일은 의뢰인(연락처)도.
   · 정식 기일  = 설명에 '사건번호'+'내용' 모두 보유 → 위 상세 양식
-  · 그 외 일정 = 제목 그대로 + 담당(변호사)로 "> 약칭님"
+  · 그 외 일정 = 제목 그대로 + 담당(변호사)로 "> 실명"
   · 섹션 순서  = 맨 위 [기한](종일 사건 기한·불변기일 등) → [일정](그 외 일정) →
                  맨 아래 [휴무](휴가·반차·연차 등 부재 일정)
 """
@@ -43,8 +44,6 @@ NON_ATTEND = {"미입회", "미출석", "불출석", "불참", "공판청취", "
 
 # 선고기일 한정: 복대리·청취대리·선고청취대리·선고청취 등 대리출석 표기를 '청취대리'로 일원화.
 LISTEN_PROXY_TERMS = ("선고청취대리", "청취대리", "선고청취", "복대리")
-# 사람이 아니라 출석방식 라벨이므로 '님'을 붙이지 않는 출석표기.
-NO_HONORIFIC = {"청취대리"}
 
 # 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
@@ -63,10 +62,9 @@ def _normalize(s: str) -> str:
 
 
 class Config:
-    """변호사 약칭표·장소 예외표·팀별 출석변호사 명단 묶음."""
+    """장소 약칭 예외표·팀별 출석변호사 명단 묶음."""
 
-    def __init__(self, lawyers: dict, locations: dict, teams: dict = None):
-        self.lawyers = lawyers or {}
+    def __init__(self, locations: dict, teams: dict = None):
         self.locations = locations or {}
         self.teams = teams or {}  # 팀명 -> 소속 출석변호사 명단(타팀 대신출석 팔로우용)
 
@@ -80,7 +78,6 @@ def load_config(config_dir: str) -> Config:
             return yaml.safe_load(f) or {}
 
     return Config(
-        _load("lawyers.yaml"),
         _load("locations.yaml"),
         _load("teams.yaml", required=False),
     )
@@ -250,11 +247,9 @@ def _normalize_listen_proxy(names, gtype):
     return out
 
 
-def _format_attendees(names, lawyers) -> str:
-    def one(n):
-        label = lawyers.get(n, n)
-        return label if n in NO_HONORIFIC else label + "님"  # 청취대리 등은 '님' 없이
-    return ", ".join(one(n) for n in names)
+def _format_attendees(names) -> str:
+    """출석자 표기: 실명(또는 '청취대리' 등 라벨) 그대로, 약칭·존칭 없이."""
+    return ", ".join(names)
 
 
 def _visit_number_sub(fields: dict, desc: str = ""):
@@ -320,7 +315,7 @@ def _meeting_phone(fields: dict, desc: str) -> str:
 
 
 def format_meeting(event: dict, fields: dict, cfg: Config, time: str):
-    """'[회의] (구분) [의뢰인]내용' → '[의뢰인] 내용 > 담당변호사님' + 장소·전화 아랫줄."""
+    """'[회의] (구분) [의뢰인]내용' → '[의뢰인] 내용 > 담당변호사' + 장소·전화 아랫줄."""
     s = (event.get("summary") or "").strip()
     s = s[len("[회의]"):].strip() if s.startswith("[회의]") else s
     s = re.sub(r"^\([^)]*\)\s*", "", s)  # 선두 '(구분)' 라벨 제거(장소는 '구분' 필드에서)
@@ -328,7 +323,7 @@ def format_meeting(event: dict, fields: dict, cfg: Config, time: str):
     client, content = (m.group(1).strip(), m.group(2).strip()) if m else ("", s)
 
     names = _attendee_names(fields.get("담당(변호사)"))
-    att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
+    att = " > " + _format_attendees(names) if names else ""
     head = f"[{client}] {content}" if client else content
 
     subs = []
@@ -356,7 +351,7 @@ def format_visit(event: dict, fields: dict, cfg: Config, time: str):
         title = title.replace(f"({place})", "").strip()
 
     names = _attendee_names(fields.get("담당(변호사)"))
-    att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
+    att = " > " + _format_attendees(names) if names else ""
 
     subs = []
     if place:
@@ -384,7 +379,7 @@ def format_timed(event: dict, fields: dict, cfg: Config):
 
         names = _normalize_listen_proxy(_gijil_attendees(fields), gtype)
         if names:
-            att = " > " + _format_attendees(names, cfg.lawyers)
+            att = " > " + _format_attendees(names)
         elif verb:
             att = f" > 미{verb}"
         else:
@@ -413,7 +408,7 @@ def format_timed(event: dict, fields: dict, cfg: Config):
     # 그 외 일정: 제목 그대로 + 담당(변호사)로 출석표기
     title = (event.get("summary") or "").strip()
     names = _attendee_names(fields.get("담당(변호사)"))
-    att = " > " + _format_attendees(names, cfg.lawyers) if names else ""
+    att = " > " + _format_attendees(names) if names else ""
     bigo = _bigo_sub(fields)
     return f"{time} {title}{att}", ([bigo] if bigo else [])
 

@@ -21,13 +21,6 @@ from transform import (  # noqa: E402
 )
 
 CFG = Config(
-    lawyers={
-        "이돈호": "돈변", "김태환": "김변", "천기섭": "천변", "박정윤": "정윤변",
-        "김정아": "아변", "김수인": "수변", "채원협": "채변", "이종원": "종변",
-        "정희소": "정변", "김윤수": "윤변", "임현진": "임변", "신이나": "신변",
-        "박건우": "건변", "이하영": "하변", "한충호": "충변", "정진실": "진변",
-        "박준호": "박변",
-    },
     locations={},
     teams={
         "송무1팀": ["천기섭", "박정윤", "박준호", "김정아"],
@@ -52,7 +45,7 @@ def test_court_attendance_no_verb():
             "출석변호사: ▲김정아 (담당: 김정아,김성호)\n내용: 변론기일(법정 10:00)"
         ),
     }
-    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 아변님", ["김포시법원 법정"])
+    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 김정아", ["김포시법원 법정"])
 
 
 def test_attendee_without_triangle():
@@ -66,7 +59,7 @@ def test_attendee_without_triangle():
             "출석변호사: 박준호\n내용: 공판기일(서관 제502호 법정 10:30)"
         ),
     }
-    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박변님", ["서울고등법원 서관 제502호 법정"])
+    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박준호", ["서울고등법원 서관 제502호 법정"])
 
 
 def test_police_with_phone():
@@ -79,7 +72,7 @@ def test_police_with_phone():
             "출석변호사: ▲김수인 (담당: 천기섭,김태환)\n내용: 조사기일"
         ),
     }
-    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 수변님", ["박설(010-7904-7204)"])
+    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 김수인", ["박설(010-7904-7204)"])
 
 
 def test_investigation_types_unified():
@@ -91,7 +84,7 @@ def test_investigation_types_unified():
             "description": f"사건번호: 9\n의뢰인: 윤민아\n출석변호사: ▲김태환\n내용: {content}",
         }
         line, _ = _fmt(ev)
-        assert line == "10:00 [윤민아] 조사기일 > 김변님", line
+        assert line == "10:00 [윤민아] 조사기일 > 김태환", line
 
 
 def test_missing_attendee_court():
@@ -122,7 +115,7 @@ def test_multiple_attendees():
             "출석변호사: ▲김태환, ▲신이나\n내용: 변론기일"
         ),
     }
-    assert _fmt(ev) == ("14:00 [신혜원] 변론기일 > 김변님, 신변님", ["서울중앙지방법원"])
+    assert _fmt(ev) == ("14:00 [신혜원] 변론기일 > 김태환, 신이나", ["서울중앙지방법원"])
 
 
 def test_status_token_is_absent():
@@ -156,7 +149,7 @@ def test_company_client_keeps_representative():
         ),
     }
     assert _fmt(ev) == (
-        "14:00 [더 주 주식회사(김주식)] 조사기일 > 채변님",
+        "14:00 [더 주 주식회사(김주식)] 조사기일 > 채원협",
         ["더 주 주식회사(김주식)(010-7242-5517)"],
     )
 
@@ -169,7 +162,7 @@ def test_individual_client_strips_mirror():
         "description": "사건번호: 4\n의뢰인: 장주원(이진희)\n장소: 서울고등법원\n"
                        "출석변호사: 박준호\n내용: 공판기일",
     }
-    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박변님", ["서울고등법원"])
+    assert _fmt(ev) == ("10:30 [장주원] 공판기일 > 박준호", ["서울고등법원"])
 
 
 # --- 화상장치 -> 영상재판 (장소 대체) --------------------------------------- #
@@ -184,7 +177,7 @@ def test_video_trial_replaces_location():
             "출석변호사: ▲이종원\n내용: 변론기일(제419호 법정 14:30) [일방 화상장치]"
         ),
     }
-    assert _fmt(ev) == ("14:30 [곽승우] 변론기일 > 종변님", ["영상재판"])
+    assert _fmt(ev) == ("14:30 [곽승우] 변론기일 > 이종원", ["영상재판"])
 
 
 def test_video_trial_investigation_keeps_phone():
@@ -198,7 +191,7 @@ def test_video_trial_investigation_keeps_phone():
             "출석변호사: ▲김수인\n내용: 조사기일 [주문 화상장치]"
         ),
     }
-    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 수변님", ["영상재판", "박설(010-7904-7204)"])
+    assert _fmt(ev) == ("14:00 [박설] 조사기일 > 김수인", ["영상재판", "박설(010-7904-7204)"])
 
 
 def test_no_video_keyword_keeps_location():
@@ -212,7 +205,7 @@ def test_no_video_keyword_keeps_location():
             "출석변호사: ▲김정아\n내용: 변론기일(법정 10:00)"
         ),
     }
-    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 아변님", ["김포시법원 법정"])
+    assert _fmt(ev) == ("10:00 [조장연] 변론기일 > 김정아", ["김포시법원 법정"])
 
 
 # --- 비고: 필터 없이 '비고 : 원문' 으로 맨 아랫줄에 노출 ----------------------- #
@@ -228,7 +221,7 @@ def test_bigo_shown_below_place_and_phone():
         ),
     }
     assert _fmt(ev) == (
-        "10:30 [오승곤] 조사기일 > 박변님",
+        "10:30 [오승곤] 조사기일 > 박준호",
         [
             "남양주북부경찰서 수사과 지능범죄수사팀",
             "오승곤(010-3257-8715)",
@@ -299,7 +292,7 @@ def test_listen_proxy_only_for_seongo():
         ),
     }
     line, _ = _fmt(ev)
-    assert line == "10:00 [박선영] 변론기일 > 복대리님", line
+    assert line == "10:00 [박선영] 변론기일 > 복대리", line
 
 
 # --- 그 외 일정(담당변호사로 출석표기, 제목 그대로) ---------------------------- #
@@ -309,7 +302,7 @@ def test_non_gijil_with_brackets_title():
         "start": {"dateTime": "2026-06-11T14:00:00+09:00"},
         "description": "담당(변호사): 이돈호\n담당(직원): #송무1팀",
     }
-    assert _fmt(ev) == ("14:00 [엄태웅] 스마트접견 > 돈변님", [])
+    assert _fmt(ev) == ("14:00 [엄태웅] 스마트접견 > 이돈호", [])
 
 
 def test_visit_shows_reservation_number():
@@ -322,7 +315,7 @@ def test_visit_shows_reservation_number():
             "스마트접견예약번호: 002317\n담당(변호사): 김태환\n담당(직원): #송무2팀"
         ),
     }
-    assert _fmt(ev) == ("11:00 [이상열] 스마트접견 > 김변님", ["접견번호 : 002317"])
+    assert _fmt(ev) == ("11:00 [이상열] 스마트접견 > 김태환", ["접견번호 : 002317"])
 
 
 def test_visit_number_no_colon():
@@ -335,7 +328,7 @@ def test_visit_number_no_colon():
             "담당(변호사): 이돈호\n담당(직원): #송무1팀,#상담지원팀"
         ),
     }
-    assert _fmt(ev) == ("11:00 [장주원] 스마트접견(돈변님) > 돈변님", ["접견번호 : 007504"])
+    assert _fmt(ev) == ("11:00 [장주원] 스마트접견(돈변님) > 이돈호", ["접견번호 : 007504"])
 
 
 def test_visit_number_below_place_above_bigo():
@@ -348,7 +341,7 @@ def test_visit_number_below_place_above_bigo():
         ),
     }
     assert _fmt(ev) == (
-        "14:00 [김갑동] 화상접견 > 돈변님",
+        "14:00 [김갑동] 화상접견 > 이돈호",
         ["서울남부교도소", "접견번호 : 12345", "비고 : 통역 필요"],
     )
 
@@ -359,7 +352,7 @@ def test_non_gijil_meeting():
         "start": {"dateTime": "2026-06-11T15:00:00+09:00"},
         "description": "담당(변호사): 이돈호,신이나",
     }
-    assert _fmt(ev) == ("15:00 황진주 미팅 > 돈변님, 신변님", [])
+    assert _fmt(ev) == ("15:00 황진주 미팅 > 이돈호, 신이나", [])
 
 
 def test_non_gijil_no_lawyer():
@@ -392,9 +385,9 @@ def test_full_message():
     expected = (
         "📅 260611 목요일\n\n"
         "[일정]\n"
-        "10:00 [조장연] 변론기일 > 아변님\n"
+        "10:00 [조장연] 변론기일 > 김정아\n"
         "        김포시법원 법정\n\n"
-        "14:00 [엄태웅] 스마트접견 > 돈변님"
+        "14:00 [엄태웅] 스마트접견 > 이돈호"
     )
     assert msg == expected
 
@@ -416,7 +409,7 @@ def test_allday_goes_to_top():
         "📅 260611 목요일\n\n"
         "[일정]\n"
         "전사 워크숍\n\n"
-        "10:00 [조장연] 변론기일 > 아변님\n"
+        "10:00 [조장연] 변론기일 > 김정아\n"
         "        김포시법원 법정"
     )
     assert msg == expected
@@ -443,7 +436,7 @@ def test_leave_section_at_bottom():
     expected = (
         "📅 260611 목요일\n\n"
         "[일정]\n"
-        "10:00 [조장연] 변론기일 > 아변님\n"
+        "10:00 [조장연] 변론기일 > 김정아\n"
         "        김포시법원 법정\n\n"
         "[휴무]\n"
         "오바다 오후반차\n"
@@ -481,7 +474,7 @@ def test_deadline_then_schedule_sections():
         "[홍길동] 항소이유서 제출기한\n"
         "        서울중앙지방법원\n\n"
         "[일정]\n"
-        "10:00 [조장연] 변론기일 > 아변님\n"
+        "10:00 [조장연] 변론기일 > 김정아\n"
         "        김포시법원 법정"
     )
     assert msg == expected
@@ -507,7 +500,7 @@ def test_include_deadlines_false_omits_deadline_section():
     assert msg == (
         "📅 260611 목요일\n\n"
         "[일정]\n"
-        "10:00 [조장연] 변론기일 > 아변님\n"
+        "10:00 [조장연] 변론기일 > 김정아\n"
         "        김포시법원 법정"
     )
 
@@ -589,7 +582,7 @@ def test_solo_damdang_fallback_when_attendee_blank():
         "description": "사건번호: 2026-1720\n의뢰인: 김현규(김현규)\n"
                        "담당변호사: 김수인\n내용: 조사기일",
     }
-    assert _fmt(ev) == ("14:00 [김현규] 조사기일 > 수변님", [])
+    assert _fmt(ev) == ("14:00 [김현규] 조사기일 > 김수인", [])
 
     # 출석변호사 칸이 공백이어도 동일하게 담당변호사 단독 폴백
     ev2 = {
@@ -598,7 +591,7 @@ def test_solo_damdang_fallback_when_attendee_blank():
         "description": "사건번호: 1\n의뢰인: 김봉주\n담당변호사: 천기섭\n"
                        "출석변호사: \n내용: 공판기일",
     }
-    assert _fmt(ev2) == ("11:00 [김봉주] 공판기일 > 천변님", [])
+    assert _fmt(ev2) == ("11:00 [김봉주] 공판기일 > 천기섭", [])
 
 
 def test_no_fallback_when_multiple_damdang_or_explicit_misiphoe():
@@ -644,7 +637,7 @@ def test_result_non_attend_overrides_listed_attorney():
     assert _fmt(ev) == ("11:20 [배수현] 공판기일 > 미출석", ["서울중앙지방법원 서관 526호 법정"])
     # 결과가 진행결과(변론종결 등)면 영향 없음 — 출석변호사 그대로.
     ev2 = dict(ev, description=ev["description"].replace("결과: 미출석", "결과: 변론종결"))
-    assert _fmt(ev2) == ("11:20 [배수현] 공판기일 > 돈변님", ["서울중앙지방법원 서관 526호 법정"])
+    assert _fmt(ev2) == ("11:20 [배수현] 공판기일 > 이돈호", ["서울중앙지방법원 서관 526호 법정"])
 
 
 def test_weekend_bundle_header():
