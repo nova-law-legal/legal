@@ -36,7 +36,6 @@ jobs:
           # 팀별 전용 채널 웹훅(없으면 기본 DISCORD_WEBHOOK_URL 로 발송)
           DISCORD_WEBHOOK_URL_SONGMU1: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU1 }}
           DISCORD_WEBHOOK_URL_SONGMU2: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU2 }}
-          DISCORD_WEBHOOK_URL_SONGMU3: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU3 }}
           DISCORD_WEBHOOK_URL_SANGDAM: ${{ secrets.DISCORD_WEBHOOK_URL_SANGDAM }}
         run: |
           if [ -n "${{ inputs.date }}" ]; then

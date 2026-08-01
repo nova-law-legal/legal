@@ -29,8 +29,10 @@ Lawware(기일관리) → Google Calendar 에 동기화된 일정을, 매일 **�
 | `transform.py` | **변환 규칙 전체**(장소약칭·출석/입회·머리말·기한) |
 | `discord_sender.py` | 웹훅 전송(2000자 초과 시 분할) |
 | `config/locations.yaml` | 기관 정식명칭 → 약칭 예외표 |
+| `config/teams.yaml` | 팀별 변호사 명단(정변호사·수습) — 오후 팀별 알림 분류 기준 |
 | `tests/test_transform.py` | 변환 회귀테스트 |
-| `.github/workflows/daily.yml` | 매일 07:00 KST 자동 실행 |
+| `.github/workflows/daily.yml` | 매일 07:00 KST 전체 일정 알림 |
+| `.github/workflows/evening.yml` | 매일 17:30 KST 익일 일정 팀별 알림(송무1·2팀, 상담지원팀) |
 | `.github/workflows/ci.yml` | 푸시 시 자동 테스트 |
 
 ---
@@ -60,6 +62,21 @@ Lawware(기일관리) → Google Calendar 에 동기화된 일정을, 매일 **�
 - **선고기일 대리출석 일원화**: 선고기일에 한해 출석변호사의 `복대리·청취대리·선고청취대리·선고청취` 표기를 모두 `청취대리`로 통일(다른 기일종류는 원문 유지)
 - **발송**: 오늘 일정만, 주말·공휴일 포함 매일. 0건이면 `오늘 일정 없음`
 
+### 팀별 오후 알림 분류 규칙 (`config/teams.yaml`)
+
+오후 17:30 익일 알림은 **송무1팀·송무2팀·상담지원팀** 3개 채널로 나눠 발송한다.
+담당직원 태그(`#송무n팀`)는 Lawware에서 삭제 예정이라 쓰지 않고, **담당변호사 소속 팀**으로 나눈다.
+
+- **송무1/2팀**: 일정의 담당변호사(정식 기일은 `담당변호사:`, 그 외 일정은 `담당(변호사):`)가
+  `teams.yaml` 의 `변호사`(정변호사) 명단에 있으면 그 팀에 포함.
+  - 담당변호사 중 정변호사가 **하나도 없을 때만** `수습` 명단으로 폴백 판정
+  - 서로 다른 팀 변호사가 함께 담당이면 **양쪽 팀 모두** 알림
+  - **교차출석 팔로우**: 다른 팀 사건이라도 출석변호사가 우리 팀 정변호사면 우리 팀 알림에도 포함
+  - 휴가·연차 등 휴무 일정은 제목의 이름(정+수습)으로 팀 판정
+- **상담지원팀**: `#상담지원팀` 태그가 있거나, 이돈호 변호사가 담당/출석하는 일정
+- 담당변호사가 없거나 명단 밖(운영팀 자체 일정 등)이면 오후 팀 알림에는 미포함(오전 전체 알림에는 나감)
+- **인사이동 시 `config/teams.yaml` 만 수정**하면 전체에 반영된다
+
 자세한 명세는 `transform.py` 상단 주석과 `tests/test_transform.py` 참고.
 
 ---
@@ -87,10 +104,13 @@ Lawware(기일관리) → Google Calendar 에 동기화된 일정을, 매일 **�
 
 ### 3-3. GitHub 저장소 + Secrets (자동 실행용)
 1. GitHub 비공개 저장소 생성 → 이 폴더의 파일 전부 업로드
-2. 저장소 **Settings → Secrets and variables → Actions → New repository secret** 으로 3개 등록:
+2. 저장소 **Settings → Secrets and variables → Actions → New repository secret** 으로 등록:
    - `GOOGLE_SERVICE_ACCOUNT_JSON` : 3-1에서 받은 JSON **파일 내용 전체**
    - `GOOGLE_CALENDAR_ID` : 캘린더 ID (여러 개면 쉼표/줄바꿈으로 구분해 모두 입력)
-   - `DISCORD_WEBHOOK_URL` : 웹훅 URL
+   - `GOOGLE_SERVICE_ACCOUNT_JSON_2` / `GOOGLE_CALENDAR_ID_2` : 두 번째 구글 계정의 키·캘린더 ID (계정이 하나면 생략)
+   - `DISCORD_WEBHOOK_URL` : 기본(오전 전체 알림) 채널 웹훅 URL
+   - `DISCORD_WEBHOOK_URL_SONGMU1` / `_SONGMU2` / `_SANGDAM` : 오후 팀별 채널 웹훅
+     (미설정 시 해당 팀 알림은 기본 채널로 폴백)
 3. **Actions** 탭에서 워크플로 활성화
 
 이후 매일 07:00(KST)에 `daily.yml` 이 자동 실행됩니다.

@@ -36,13 +36,12 @@ CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 EVENING_TEAMS = [
     ("송무1팀", "DISCORD_WEBHOOK_URL_SONGMU1"),
     ("송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
-    ("송무3팀", "DISCORD_WEBHOOK_URL_SONGMU3"),
     ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
 ]
 
 # 금요일 저녁(익일=토요일) 묶음 대상 팀 — 토·일·월 3일치를 한 메시지로 보낸다.
 # (상담지원팀은 제외하고 평소대로 익일 하루치만 발송)
-WEEKEND_BUNDLE_TEAMS = {"송무1팀", "송무2팀", "송무3팀"}
+WEEKEND_BUNDLE_TEAMS = {"송무1팀", "송무2팀"}
 
 
 def main():
@@ -65,7 +64,7 @@ def main():
     parser.add_argument(
         "--teams",
         action="store_true",
-        help="송무1/2/3팀별로 분류해 팀마다 따로 발송",
+        help="송무1/2팀·상담지원팀별로 분류해 팀마다 따로 발송",
     )
     args = parser.parse_args()
 
@@ -94,7 +93,7 @@ def main():
 
     # 송무 팀별 분류 발송 모드
     if args.teams:
-        # 금요일 저녁(익일=토요일) → 송무1/2/3팀은 토·일·월 3일치를 한 메시지로 묶는다.
+        # 금요일 저녁(익일=토요일) → 송무1/2팀은 토·일·월 3일치를 한 메시지로 묶는다.
         # 묶음 대상이면 토·일·월 각 날짜의 일정을 미리 한 번씩만 조회해 둔다.
         bundle = day.weekday() == 5  # 대상일이 토요일 == 금요일 저녁 실행
         bundle_days, bundle_events = [], {}

@@ -61,12 +61,25 @@ def _normalize(s: str) -> str:
     return "".join(_CIRCLED.get(ch, ch) for ch in s)
 
 
+def _normalize_team(v):
+    """teams.yaml 팀 항목 정규화 → {'변호사': [...], '수습': [...], '태그': bool}.
+    구형(list) 값은 {'변호사': v, '수습': [], '태그': True} 로 해석(하위호환)."""
+    if isinstance(v, list):
+        return {"변호사": v, "수습": [], "태그": True}
+    return {
+        "변호사": (v or {}).get("변호사") or [],
+        "수습": (v or {}).get("수습") or [],
+        "태그": bool((v or {}).get("태그")),
+    }
+
+
 class Config:
-    """장소 약칭 예외표·팀별 출석변호사 명단 묶음."""
+    """장소 약칭 예외표·팀별 변호사 명단 묶음."""
 
     def __init__(self, locations: dict, teams: dict = None):
         self.locations = locations or {}
-        self.teams = teams or {}  # 팀명 -> 소속 출석변호사 명단(타팀 대신출석 팔로우용)
+        # 팀명 -> {'변호사': 정변호사, '수습': 수습변호사, '태그': 담당직원 태그 매칭 여부}
+        self.teams = {t: _normalize_team(v) for t, v in (teams or {}).items()}
 
 
 def load_config(config_dir: str) -> Config:
@@ -163,24 +176,43 @@ def extract_client(summary: str, fields: dict) -> str:
 
 
 def event_in_team(event: dict, team: str, teams: dict = None) -> bool:
-    """일정이 해당 팀의 알림에 포함되는지.
+    """일정이 해당 팀의 알림에 포함되는지. (v1.13.0: 태그 기준 → 담당변호사 소속 기준)
 
-    ① 담당직원/담당(직원) 필드에 팀 태그(예 '송무1팀')가 있으면 포함(그 팀의 사건).
-    ② teams(팀명→소속 변호사 명단)가 주어지면, 다른 팀 사건이라도 그 일정의
-       출석변호사(없으면 담당(변호사))가 이 팀 소속이면 포함한다. 다른 팀 변호사가
-       대신 출석하는 경우, 그 변호사 소속 팀에서도 일정을 팔로우하기 위함."""
+    ① 태그: '태그: true' 팀(상담지원팀)만 담당직원/담당(직원)의 팀 태그로 매칭.
+       송무팀 태그(#송무n팀)는 Lawware에서 삭제 예정 + 팀 재편 후 잔존 태그가
+       오분류를 유발할 수 있어 사용하지 않는다. (teams 미전달·미등록 팀은 구형
+       동작대로 태그 매칭만 유지)
+    ② 담당변호사 소속: 담당변호사(정식 기일)/담당(변호사)(그 외 일정)의 정변호사
+       소속 팀 — 정변호사가 하나도 없을 때만 수습 매핑 폴백. 서로 다른 팀 변호사가
+       함께 담당이면 양쪽 팀 모두 포함.
+    ③ 교차출석 팔로우: 다른 팀 사건이라도 출석변호사(미기재 시 담당 단독 폴백,
+       그 외 일정은 담당(변호사))가 이 팀 정변호사면 포함. (수습은 직접 출석 안 함)
+    ④ 휴무: 휴가·연차 등은 담당변호사 필드가 없으므로 제목에 팀 소속(정+수습)
+       이름이 있으면 포함."""
     fields = parse_description(event.get("description", ""))
-    text = f"{fields.get('담당직원', '')} {fields.get('담당(직원)', '')}"
-    if team in text:
-        return True
-    if teams:
-        roster = teams.get(team) or []
-        # 출석변호사(담당변호사 단독 폴백 포함). 없으면 그 외 일정의 담당(변호사).
-        names = _gijil_attendees(fields)
-        if not names:
-            names = _attendee_names(fields.get("담당(변호사)")) or []
-        if any(n in roster for n in names):
+    cfg = (teams or {}).get(team)
+
+    # ① 태그 — 미등록 팀(구형 호출)도 태그 매칭만은 유지
+    if cfg is None or cfg["태그"]:
+        staff = f"{fields.get('담당직원', '')} {fields.get('담당(직원)', '')}"
+        if team in staff:
             return True
+    if cfg is None:
+        return False
+
+    # ② 담당변호사 소속 팀 판정
+    if team in _teams_of(_responsible_names(fields), teams):
+        return True
+
+    # ③ 교차출석 팔로우 — 출석변호사(담당 단독 폴백 포함). 없으면 담당(변호사).
+    attendees = _gijil_attendees(fields) or _attendee_names(fields.get("담당(변호사)")) or []
+    if any(n in cfg["변호사"] for n in attendees):
+        return True
+
+    # ④ 휴무 — 제목의 이름으로 판별
+    if is_leave(event):
+        title = event.get("summary") or ""
+        return any(n in title for n in cfg["변호사"] + cfg["수습"])
     return False
 
 
@@ -232,6 +264,31 @@ def _gijil_attendees(fields):
         if solo and len(solo) == 1:
             return solo
     return names or []
+
+
+_DAMDANG_PAREN_RE = re.compile(r"\(담당:\s*([^)]*)\)")
+
+
+def _responsible_names(fields):
+    """일정의 담당변호사 실명 리스트(팀 분류용).
+    ① 정식 기일의 '담당변호사' 필드 → ② 그 외 일정의 '담당(변호사)' 필드
+    → ③ 폴백: 독립 필드 없이 '출석변호사: ▲김정아 (담당: 김정아,김성호)' 처럼
+      출석변호사 칸 괄호에만 담당이 적힌 실데이터 형태."""
+    for key in ("담당변호사", "담당(변호사)"):
+        names = _attendee_names(fields.get(key))
+        if names:
+            return names
+    m = _DAMDANG_PAREN_RE.search(fields.get("출석변호사") or "")
+    return (_attendee_names(m.group(1)) or []) if m else []
+
+
+def _teams_of(names, teams):
+    """담당변호사 이름들 → 소속 팀 집합. 정변호사('변호사') 매핑 우선,
+    정변호사가 하나도 없을 때만 수습 매핑 폴백. 복수 팀이면 모두 반환."""
+    senior = {t for t, c in teams.items() if any(n in c["변호사"] for n in names)}
+    if senior:
+        return senior
+    return {t for t, c in teams.items() if any(n in c["수습"] for n in names)}
 
 
 def _normalize_listen_proxy(names, gtype):
@@ -442,7 +499,7 @@ def format_header_lead(lead: str, d: date) -> str:
 
 def format_header_weekend(team: str, d: date) -> str:
     """금요일 저녁 송무팀 묶음 알림의 '일자별' 머리말.
-    예: '📅 [송무3팀] 토요일 일정(260627)'. (요일은 풀네임, 괄호엔 날짜만)"""
+    예: '📅 [송무1팀] 토요일 일정(260627)'. (요일은 풀네임, 괄호엔 날짜만)"""
     return f"📅 [{team}] {WEEKDAYS[d.weekday()]}요일 일정({d.strftime('%y%m%d')})"
 
 

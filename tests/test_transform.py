@@ -23,9 +23,15 @@ from transform import (  # noqa: E402
 CFG = Config(
     locations={},
     teams={
-        "송무1팀": ["천기섭", "박정윤", "박준호", "김정아"],
-        "송무2팀": ["김태환", "김수인"],
-        "송무3팀": ["채원협", "이종원"],
+        "송무1팀": {
+            "변호사": ["천기섭", "박정윤", "박준호", "김정아", "이종원"],
+            "수습": ["신이나", "정희소", "이하영", "정진실"],
+        },
+        "송무2팀": {
+            "변호사": ["김태환", "채원협", "김수인"],
+            "수습": ["임현진", "김윤수", "박건우", "한충호"],
+        },
+        "상담지원팀": {"변호사": ["이돈호"], "태그": True},
     },
 )
 
@@ -540,38 +546,130 @@ def test_mention_afternoon_block():
 
 
 def test_event_in_team():
-    gijil = {"description": "사건번호: 1\n담당직원: #송무2팀\n내용: 변론기일"}
-    nongijil = {"description": "담당(변호사): 이돈호\n담당(직원): #송무1팀"}
-    leave = {"description": "담당(직원): 손진영,#운영팀,#휴가"}
-    assert event_in_team(gijil, "송무2팀") is True
-    assert event_in_team(gijil, "송무1팀") is False
-    assert event_in_team(nongijil, "송무1팀") is True
-    assert event_in_team(leave, "송무1팀") is False
-    assert event_in_team(leave, "송무2팀") is False
+    # (v1.13.0) 송무팀은 태그가 아니라 담당변호사 소속 팀으로 분류
+    gijil = {"description": "사건번호: 1\n담당변호사: 김태환\n내용: 변론기일"}
+    assert event_in_team(gijil, "송무2팀", CFG.teams) is True
+    assert event_in_team(gijil, "송무1팀", CFG.teams) is False
+    nongijil = {"description": "구분: 회의\n담당(변호사): 천기섭"}
+    assert event_in_team(nongijil, "송무1팀", CFG.teams) is True
+    assert event_in_team(nongijil, "송무2팀", CFG.teams) is False
+    # 직원 일정(명단 밖 이름)은 어느 팀에도 미포함
+    leave = {"summary": "손진영 오후반차", "description": "담당(직원): 손진영,#운영팀,#휴가"}
+    assert event_in_team(leave, "송무1팀", CFG.teams) is False
+    assert event_in_team(leave, "송무2팀", CFG.teams) is False
+
+
+def test_songmu_tag_ignored():
+    # 잔존 송무팀 태그는 무시 — 담당변호사 소속(송무2팀)만 따른다
+    ev = {"description": "사건번호: 1\n담당변호사: 김태환\n담당직원: #송무1팀\n내용: 변론기일"}
+    assert event_in_team(ev, "송무1팀", CFG.teams) is False
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True
+    # 태그만 있고 담당변호사가 없으면 송무팀 알림에 미포함
+    tag_only = {"description": "사건번호: 2\n담당직원: #송무2팀\n내용: 변론기일"}
+    assert event_in_team(tag_only, "송무2팀", CFG.teams) is False
+
+
+def test_team_by_responsible_multi_team():
+    # 서로 다른 팀 변호사가 함께 담당 -> 양쪽 팀 모두 포함
+    ev = {"description": "사건번호: 1\n담당변호사: 김정아,김태환\n내용: 변론기일"}
+    assert event_in_team(ev, "송무1팀", CFG.teams) is True
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True
+
+
+def test_trainee_fallback_only_without_senior():
+    # 담당변호사에 수습만 있으면 수습 매핑으로 폴백
+    trainee = {"description": "사건번호: 1\n담당변호사: 신이나\n내용: 변론기일"}
+    assert event_in_team(trainee, "송무1팀", CFG.teams) is True
+    assert event_in_team(trainee, "송무2팀", CFG.teams) is False
+    # 정변호사가 하나라도 있으면 수습 매핑 미발동(김태환=2팀, 신이나=1팀 수습이어도 2팀만)
+    mixed = {"description": "사건번호: 2\n담당변호사: 김태환,신이나\n내용: 변론기일"}
+    assert event_in_team(mixed, "송무2팀", CFG.teams) is True
+    assert event_in_team(mixed, "송무1팀", CFG.teams) is False
+
+
+def test_sangdam_by_tag_or_donho():
+    # 상담지원팀은 태그 매칭 유지
     support = {"description": "구분: 상담\n담당(변호사): 김태환\n담당(직원): #상담지원팀"}
-    assert event_in_team(support, "상담지원팀") is True
-    assert event_in_team(support, "송무1팀") is False
+    assert event_in_team(support, "상담지원팀", CFG.teams) is True
+    assert event_in_team(support, "송무2팀", CFG.teams) is True   # 김태환 담당이라 2팀에도(중복 노출 의도)
+    assert event_in_team(support, "송무1팀", CFG.teams) is False
+    # 태그가 없어도 이돈호 담당이면 포함
+    donho = {"description": "구분: 상담\n담당(변호사): 이돈호"}
+    assert event_in_team(donho, "상담지원팀", CFG.teams) is True
+    assert event_in_team(donho, "송무1팀", CFG.teams) is False
+    # 김태환 담당(태그 없음)은 이제 상담지원팀에 미포함 — 송무2팀 기준으로만
+    taehwan = {"description": "구분: 상담\n담당(변호사): 김태환"}
+    assert event_in_team(taehwan, "상담지원팀", CFG.teams) is False
+    # 이돈호가 출석변호사인 기일도 팔로우(교차출석)
+    attend = {"description": "사건번호: 1\n담당변호사: 김태환,김수인\n"
+                             "출석변호사: ▲이돈호 (담당: 김태환,김수인)\n내용: 공판기일"}
+    assert event_in_team(attend, "상담지원팀", CFG.teams) is True
+    assert event_in_team(attend, "송무2팀", CFG.teams) is True
+
+
+def test_donho_with_trainee_pins_no_songmu():
+    # 이돈호(정변호사)+신이나(수습) 담당 -> 1차 매핑 성립(상담지원팀)이라 수습 폴백 미발동
+    ev = {"description": "구분: 상담\n담당(변호사): 이돈호,신이나"}
+    assert event_in_team(ev, "상담지원팀", CFG.teams) is True
+    assert event_in_team(ev, "송무1팀", CFG.teams) is False
+
+
+def test_no_lawyer_event_in_no_team():
+    # 담당변호사 필드가 없거나 명단 밖 이름뿐(운영팀 자체 일정 등) -> 어느 팀에도 미포함
+    for ev in (
+        {"summary": "사무실 정기점검", "description": ""},
+        {"description": "담당(변호사): 김성호\n담당(직원): 손진영"},
+    ):
+        for team in ("송무1팀", "송무2팀", "상담지원팀"):
+            assert event_in_team(ev, team, CFG.teams) is False
+
+
+def test_damdang_paren_fallback():
+    # 독립 '담당변호사' 필드 없이 출석변호사 칸 괄호에만 담당이 적힌 실데이터 형태
+    # -> 괄호 안(채원협=송무2팀)으로 사건 팀 판정 + 출석자(이돈호)로 상담지원팀 팔로우
+    ev = {"description": "사건번호: 1\n출석변호사: ▲이돈호 (담당: 채원협)\n내용: 공판기일"}
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True
+    assert event_in_team(ev, "상담지원팀", CFG.teams) is True
+    assert event_in_team(ev, "송무1팀", CFG.teams) is False
+
+
+def test_leave_follow_by_name():
+    # 휴무 일정은 담당변호사 필드가 없으므로 제목의 이름으로 팀 판정(정+수습)
+    assert event_in_team({"summary": "김정아 연차"}, "송무1팀", CFG.teams) is True
+    assert event_in_team({"summary": "김정아 연차"}, "송무2팀", CFG.teams) is False
+    assert event_in_team({"summary": "정진실 오전반차"}, "송무1팀", CFG.teams) is True   # 수습 포함
+    assert event_in_team({"summary": "한충호 휴가"}, "송무2팀", CFG.teams) is True
+    assert event_in_team({"summary": "손진영 오후반반차"}, "송무1팀", CFG.teams) is False
+
+
+def test_legacy_list_roster_compat():
+    # 구형(list) teams.yaml 하위호환: 태그 매칭 + 출석 팔로우 동작 유지
+    legacy = Config(locations={}, teams={"송무1팀": ["천기섭"]})
+    tagged = {"description": "사건번호: 1\n담당직원: #송무1팀\n내용: 변론기일"}
+    assert event_in_team(tagged, "송무1팀", legacy.teams) is True
+    attend = {"description": "사건번호: 2\n출석변호사: 천기섭\n내용: 공판기일"}
+    assert event_in_team(attend, "송무1팀", legacy.teams) is True
 
 
 def test_event_in_team_cross_team_attendance():
-    # 송무1팀 사건인데 송무2팀 김수인이 대신 출석 -> 송무1팀(사건)·송무2팀(출석) 모두 포함
+    # 송무1팀 사건(담당 천기섭)인데 송무2팀 김수인이 대신 출석 -> 양 팀 모두 포함
     ev = {
-        "description": "사건번호: 1\n출석변호사: 김수인\n담당직원: #송무1팀\n내용: 조사기일",
+        "description": "사건번호: 1\n담당변호사: 천기섭\n출석변호사: 김수인\n내용: 조사기일",
     }
-    assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당직원 태그
+    assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당변호사 소속
     assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 출석변호사 소속
-    assert event_in_team(ev, "송무3팀", CFG.teams) is False
-    # teams 미전달 시(구버전 호출)에는 출석변호사 기반 포함이 동작하지 않음
+    # teams 미전달 시(구버전 호출)에는 태그 매칭만 동작하므로 미포함
     assert event_in_team(ev, "송무2팀") is False
 
-    # 출석변호사가 빈칸(미입회)이면 어느 팀도 출석 기준으로 끌어오지 않음
-    empty = {"description": "사건번호: 2\n출석변호사: \n담당직원: #송무3팀\n내용: 조사기일"}
-    assert event_in_team(empty, "송무3팀", CFG.teams) is True   # 담당직원 태그만
+    # 출석변호사가 빈칸 + 담당변호사 2명(폴백 없음) -> 담당 소속 팀만
+    empty = {"description": "사건번호: 2\n담당변호사: 천기섭,박정윤\n출석변호사: \n내용: 조사기일"}
+    assert event_in_team(empty, "송무1팀", CFG.teams) is True
     assert event_in_team(empty, "송무2팀", CFG.teams) is False
 
-    # 그 외 일정은 담당(변호사) 기준으로 출석팀 판정
-    nongijil = {"description": "담당(변호사): 채원협\n담당(직원): #송무1팀"}
-    assert event_in_team(nongijil, "송무3팀", CFG.teams) is True   # 채원협=송무3팀
+    # 그 외 일정은 담당(변호사) 기준으로 판정
+    nongijil = {"description": "담당(변호사): 채원협"}
+    assert event_in_team(nongijil, "송무2팀", CFG.teams) is True   # 채원협=송무2팀
+    assert event_in_team(nongijil, "송무1팀", CFG.teams) is False
 
 
 def test_solo_damdang_fallback_when_attendee_blank():
@@ -612,14 +710,14 @@ def test_no_fallback_when_multiple_damdang_or_explicit_misiphoe():
     assert _fmt(explicit) == ("14:00 [김민지] 조사기일 > 미입회", [])
 
 
-def test_solo_damdang_fallback_drives_cross_team():
-    # 송무1팀 사건이고 출석변호사 미기재 + 담당변호사 단독 김수인(송무2팀)
-    # -> 폴백된 출석자 기준으로 송무2팀에도 포함
+def test_solo_damdang_only_own_team():
+    # 출석변호사 미기재 + 담당변호사 단독 김수인(송무2팀)
+    # -> 담당 소속(송무2팀)에만 포함. 잔존 송무1팀 태그는 무시.
     ev = {
         "description": "사건번호: 1\n담당변호사: 김수인\n담당직원: #송무1팀\n내용: 조사기일",
     }
-    assert event_in_team(ev, "송무1팀", CFG.teams) is True   # 담당직원 태그
-    assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 폴백 출석자=김수인
+    assert event_in_team(ev, "송무2팀", CFG.teams) is True   # 담당 소속(폴백 출석자와 일치)
+    assert event_in_team(ev, "송무1팀", CFG.teams) is False  # 태그 미사용
 
 
 def test_result_non_attend_overrides_listed_attorney():
@@ -642,16 +740,16 @@ def test_result_non_attend_overrides_listed_attorney():
 
 def test_weekend_bundle_header():
     # 금요일 저녁 묶음 머리말: 요일 풀네임 + 괄호엔 날짜만(요일 약칭 없음).
-    assert format_header_weekend("송무3팀", date(2026, 6, 27)) == "📅 [송무3팀] 토요일 일정(260627)"
+    assert format_header_weekend("송무1팀", date(2026, 6, 27)) == "📅 [송무1팀] 토요일 일정(260627)"
     assert format_header_weekend("송무1팀", date(2026, 6, 28)) == "📅 [송무1팀] 일요일 일정(260628)"
     assert format_header_weekend("송무2팀", date(2026, 6, 29)) == "📅 [송무2팀] 월요일 일정(260629)"
 
 
 def test_build_message_head_override():
     # head 직접 지정 시 그 머리말을 그대로 쓰고, 일정 없으면 '일정 없음' 본문.
-    head = format_header_weekend("송무3팀", date(2026, 6, 28))
+    head = format_header_weekend("송무2팀", date(2026, 6, 28))
     msg = build_message([], date(2026, 6, 28), CFG, head=head)
-    assert msg == "📅 [송무3팀] 일요일 일정(260628)\n\n일정 없음"
+    assert msg == "📅 [송무2팀] 일요일 일정(260628)\n\n일정 없음"
 
 
 if __name__ == "__main__":
