@@ -19,6 +19,7 @@ from transform import (  # noqa: E402
     build_section_message,
     build_team_message,
     event_in_team,
+    event_in_team_by_staff,
     format_deadline,
     format_header,
     format_header_weekend,
@@ -989,6 +990,62 @@ def test_office_meeting_weekend_head():
     msg = build_office_meeting_message([], sat, cfg,
                                        head=format_header_weekend_lead("[상담]", sat))
     assert msg.startswith("📅 [상담] 토요일 일정(260815)\n\n### 서울 1006호\n없음")
+
+
+# --------------------------------------------------------------------------- #
+# v1.18.0 — 담당직원 소속팀 폴백, 라벨 없는 접견번호 인식
+# --------------------------------------------------------------------------- #
+def test_staff_team_fallback_for_donho_only_case():
+    # 담당변호사가 이돈호뿐인 사건은 담당직원 소속팀(staff.yaml 역매핑) 알림에도 실린다.
+    ev = {"summary": "[강성구] 스마트접견",
+          "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+          "description": "005260\n담당(변호사): 이돈호\n담당(직원): 민은선,#송무2팀,#상담지원팀"}
+    assert event_in_team_by_staff(ev, "송무2팀", CFG) is True    # 민은선=김태환 담당(2팀)
+    assert event_in_team_by_staff(ev, "송무1팀", CFG) is False
+    assert [e["summary"] for e in team_events([ev], CFG, "송무2팀")] == ["[강성구] 스마트접견"]
+    assert team_events([ev], CFG, "송무1팀") == []
+    # 팀 알림에서는 어느 변호사 섹션도 아니므로 '### 기타'에 실린다.
+    msg = build_team_message([ev], DAY, CFG, "송무2팀")
+    assert "### 기타\n[기한]\n없음\n\n[일정]\n11:00 [강성구] 스마트접견 > 이돈호" in msg
+
+
+def test_staff_team_fallback_not_for_songmu_cases():
+    # 송무팀 변호사가 담당·출석인 사건은 직원 소속팀으로 새지 않는다(변호사 매핑 우선).
+    ev = {"summary": "[박정민] 스마트접견",
+          "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+          "description": "담당(변호사): 김태환\n담당(직원): 우서영"}  # 우서영=1팀 직원
+    assert event_in_team_by_staff(ev, "송무1팀", CFG) is False
+    # 이돈호 사건이라도 담당직원이 이돈호 전속(조준혁 등)이면 송무팀 알림에 안 실린다.
+    own = {"summary": "[안호준] 스마트접견",
+           "start": {"dateTime": "2026-08-10T13:00:00+09:00"},
+           "description": "담당(변호사): 이돈호\n담당(직원): 조준혁,#상담지원팀"}
+    assert event_in_team_by_staff(own, "송무1팀", CFG) is False
+    assert event_in_team_by_staff(own, "송무2팀", CFG) is False
+    # 담당변호사가 아예 없는 일정(운영팀 등)도 종전대로 미포함.
+    none = {"summary": "사무실 정기점검", "description": "담당(직원): 민은선"}
+    assert event_in_team_by_staff(none, "송무2팀", CFG) is False
+
+
+def test_visit_number_without_label():
+    # 라벨 없이 숫자만 달랑 적힌 줄도 접견번호로 인식한다.
+    bare = {"summary": "[남승규] 스마트접견",
+            "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+            "description": "004627\n담당(변호사): 이돈호"}
+    assert _fmt(bare) == ("11:00 [남승규] 스마트접견 > 이돈호", ["접견번호 : 004627"])
+    # 라벨('스마트접견번호')이 윗줄, 번호가 다음 줄인 형태.
+    label_above = {"summary": "[강성구] 스마트 접견",
+                   "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+                   "description": "스마트접견번호\n000074\n담당(변호사): 김수인"}
+    assert _fmt(label_above)[1] == ["접견번호 : 000074"]
+    # 전화번호(하이픈)·사건번호('key:' 꼴)는 접견번호로 오인하지 않는다.
+    phone_only = {"summary": "[김성환] 스마트 접견",
+                  "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+                  "description": "사건번호: 2026고단41\n의뢰인: 김성환\n"
+                                 "의뢰인연락처: 010-8406-5173\n내용: 스마트 접견\n담당변호사: 김태환"}
+    assert all("접견번호" not in s for s in _fmt(phone_only)[1])
+    # 기존 라벨 형태('접견번호 007504', '접견번호 : 007367')는 종전과 동일.
+    labeled = dict(bare, description="접견번호 007504\n담당(변호사): 이돈호")
+    assert _fmt(labeled)[1] == ["접견번호 : 007504"]
 
 
 def test_real_config_rosters_and_staff():

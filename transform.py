@@ -312,15 +312,22 @@ def is_staff_errand(event: dict, fields: dict) -> bool:
     return any(k in text for k in STAFF_ERRAND_KW)
 
 
-def _staff_attendee(fields: dict):
-    """담당직원 명단의 맨 앞 사람(팀 태그 '#…' 은 건너뜀). 없으면 None.
-    수령·복사·등사 일정에서 실제로 가는 직원으로 본다."""
+def _staff_names(fields: dict) -> list:
+    """담당직원/담당(직원) 필드의 사람 이름들(팀 태그 '#…' 은 제외, 순서 유지)."""
+    out = []
     for key in ("담당직원", "담당(직원)"):
         for name in re.split(r"[,\s]+", fields.get(key) or ""):
             name = name.strip()
-            if name and not name.startswith("#"):
-                return name
-    return None
+            if name and not name.startswith("#") and name not in out:
+                out.append(name)
+    return out
+
+
+def _staff_attendee(fields: dict):
+    """담당직원 명단의 맨 앞 사람. 없으면 None.
+    수령·복사·등사 일정에서 실제로 가는 직원으로 본다."""
+    names = _staff_names(fields)
+    return names[0] if names else None
 
 
 _DAMDANG_PAREN_RE = re.compile(r"\(담당:\s*([^)]*)\)")
@@ -348,6 +355,39 @@ def _teams_of(names, teams):
     return {t for t, c in teams.items() if any(n in c["수습"] for n in names)}
 
 
+def _songmu_roster(teams: dict) -> set:
+    """태그 매칭 팀(상담지원팀)을 뺀 송무팀들의 변호사+수습 전체 명단."""
+    names = set()
+    for tc in (teams or {}).values():
+        if not tc["태그"]:
+            names.update(tc["변호사"])
+            names.update(tc["수습"])
+    return names
+
+
+def event_in_team_by_staff(event: dict, team: str, cfg) -> bool:
+    """담당변호사가 송무팀 명단 밖(예: 이돈호 대표변호사 단독)인 사건을
+    '담당직원 소속팀'으로 배정하는 폴백. (v1.18.0)
+
+    · 담당변호사·출석변호사 기준으로 어느 송무팀에도 안 잡히는 사건만 대상
+      (변호사 기준 매핑이 항상 우선 — 다른 팀 사건이 직원 때문에 새지 않게).
+    · 담당직원(사람 이름, '#' 태그 제외) 중 한 명이라도 이 팀 변호사의
+      담당직원(staff.yaml)이면 포함. 팀 알림에서는 '### 기타' 섹션에 실린다.
+    · 휴무 일정은 제외(직원 휴무는 staff.yaml 로 변호사 섹션에 이미 배정된다)."""
+    if is_leave(event):
+        return False
+    fields = parse_description(event.get("description", ""))
+    resp = _responsible_names(fields)
+    if not resp:
+        return False  # 변호사 없는 일정(운영팀 자체 일정 등)은 종전대로 미포함
+    involved = set(resp) | set(_gijil_attendees(fields) or []) \
+        | set(_attendee_names(fields.get("담당(변호사)")) or [])
+    if involved & _songmu_roster(cfg.teams):
+        return False  # 송무팀 변호사가 담당·출석이면 변호사 기준 매핑에 맡긴다
+    team_staff = {s for n in team_sections(team, cfg) for s in cfg.staff.get(n, [])}
+    return bool(set(_staff_names(fields)) & team_staff)
+
+
 def _normalize_listen_proxy(names, gtype):
     """선고기일에 한해 복대리/청취대리/선고청취대리/선고청취 표기를 '청취대리'로 일원화.
     (다른 기일종류는 그대로 둔다.) 중복은 순서 유지하며 1건으로 정리."""
@@ -370,7 +410,10 @@ def _visit_number_sub(fields: dict, desc: str = ""):
     """접견 예약번호가 있으면 '접견번호 : 원문' 한 줄로(없으면 None).
     ① 구조화된 필드: 키에 '접견'+'번호'가 든 'key: value'('스마트접견예약번호' 등 변형 포함).
     ② 콜론이 없어 필드로 안 잡히는 경우('접견번호 007504'처럼 띄어쓰기): 설명 본문에서
-       '접견'·'번호'가 함께 든 줄을 찾아 그 뒤의 번호(숫자/영숫자)를 직접 인식."""
+       '접견'·'번호'가 함께 든 줄을 찾아 그 뒤의 번호(숫자/영숫자)를 직접 인식.
+    ③ 라벨이 아예 없는 경우: 접견 일정 설명에 숫자만 달랑 적힌 줄('004627')은
+       접견번호로 본다 — 라벨이 윗줄에만 있는 '스마트접견번호↵000074' 형태 포함.
+       (전화번호는 하이픈, 사건번호는 'key:' 꼴이라 이 규칙에 안 걸린다)"""
     for key, val in fields.items():
         if "접견" in key and "번호" in key and val.strip():
             return f"접견번호 : {val.strip()}"
@@ -379,6 +422,10 @@ def _visit_number_sub(fields: dict, desc: str = ""):
             m = re.search(r"번호\s*[:\-]?\s*([0-9A-Za-z\-]+)", line)
             if m:
                 return f"접견번호 : {m.group(1)}"
+    for line in (desc or "").splitlines():
+        m = re.fullmatch(r"\s*(\d{3,})\s*", line)
+        if m:
+            return f"접견번호 : {m.group(1)}"
     return None
 
 
@@ -697,12 +744,13 @@ def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
 
 
 def team_events(events: list, cfg: Config, team: str) -> list:
-    """그 팀 알림에 실리는 일정만 추린다(변호사 섹션 대상 + 팀 판정 '기타' 일정).
-    오전 팀 알림(build_message 로 한 통에 모아 발송)의 입력으로도 쓴다."""
+    """그 팀 알림에 실리는 일정만 추린다(변호사 섹션 대상 + 팀 판정 '기타' 일정
+    + 담당직원 소속팀 폴백). 오전 팀 알림(build_message 한 통 발송)의 입력으로도 쓴다."""
     names = team_sections(team, cfg)
     return [
         ev for ev in events
         if lawyer_owners(ev, names, cfg) or event_in_team(ev, team, cfg.teams)
+        or event_in_team_by_staff(ev, team, cfg)
     ]
 
 
@@ -758,7 +806,7 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
         if owners:
             for n in owners:
                 buckets[n].append(ev)
-        elif event_in_team(ev, team, cfg.teams):
+        elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
             others.append(ev)
 
     blocks = [
