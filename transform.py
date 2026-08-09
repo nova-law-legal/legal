@@ -560,10 +560,16 @@ def format_header_lead(lead: str, d: date) -> str:
     return f"📅 {lead}({d.strftime('%y%m%d')}, {WEEKDAYS[d.weekday()]})"
 
 
+def format_header_weekend_lead(lead: str, d: date) -> str:
+    """금요일 저녁 토·일·월 묶음 알림의 '일자별' 머리말.
+    예: '📅 [송무1팀] 토요일 일정(260815)', '📅 이돈호 변호사 토요일 일정(260815)'.
+    (요일은 풀네임, 괄호엔 날짜만)"""
+    return f"📅 {lead} {WEEKDAYS[d.weekday()]}요일 일정({d.strftime('%y%m%d')})"
+
+
 def format_header_weekend(team: str, d: date) -> str:
-    """금요일 저녁 송무팀 묶음 알림의 '일자별' 머리말.
-    예: '📅 [송무1팀] 토요일 일정(260627)'. (요일은 풀네임, 괄호엔 날짜만)"""
-    return f"📅 [{team}] {WEEKDAYS[d.weekday()]}요일 일정({d.strftime('%y%m%d')})"
+    """금요일 저녁 팀 묶음 알림의 '일자별' 머리말. 예: '📅 [송무1팀] 토요일 일정(260815)'."""
+    return format_header_weekend_lead(f"[{team}]", d)
 
 
 def _emit(body, line, subs):
@@ -715,12 +721,16 @@ def lawyer_events(events: list, cfg: Config, lawyer: str) -> list:
 
 
 def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
-                         day_label: str = None, mention: bool = False) -> str:
+                         day_label: str = None, head: str = None,
+                         mention: bool = False) -> str:
     """변호사 한 명의 개인 알림 — 팀과 별개로 본인 일정만 담은 메시지.
-    예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [기한]/[일정]/[휴무]."""
-    lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
+    예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [기한]/[일정]/[휴무].
+    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다."""
+    if head is None:
+        lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
+        head = format_header_lead(lead, day)
     text = _lawyer_body(lawyer_events(events, cfg, lawyer), cfg)
-    return _wrap(format_header_lead(lead, day), text, mention, inline=False)
+    return _wrap(head, text, mention, inline=False)
 
 
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,

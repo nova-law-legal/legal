@@ -34,6 +34,7 @@ from transform import (
     build_section_message,
     build_team_message,
     format_header_weekend,
+    format_header_weekend_lead,
     lawyer_events,
     load_config,
     team_event_count,
@@ -53,9 +54,8 @@ EVENING_TARGETS = [
 # 오전 전체 알림에서 '@everyone' 을 붙일 섹션 (알림 3연타를 피해 한 번만 멘션)
 MORNING_MENTION_SECTION = "일정"
 
-# 금요일 저녁(익일=토요일) 묶음 대상 팀 — 토·일·월 3일치를 한 메시지로 보낸다.
-# (상담지원팀은 제외하고 평소대로 익일 하루치만 발송)
-WEEKEND_BUNDLE_TEAMS = {"송무1팀", "송무2팀"}
+# 금요일 저녁(익일=토요일) 묶음 대상 — 토·일·월 3일치를 한 메시지로 보낸다.
+WEEKEND_BUNDLE_TARGETS = {"이돈호", "송무1팀", "송무2팀"}
 
 
 def main():
@@ -116,16 +116,23 @@ def main():
             bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
 
         for kind, name, env_key in EVENING_TARGETS:
-            if bundle and name in WEEKEND_BUNDLE_TEAMS:
+            if bundle and name in WEEKEND_BUNDLE_TARGETS:
                 # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다.
-                # 3일치라 길어지므로 일정 없는 변호사 섹션은 생략(skip_empty).
+                # 팀 알림은 3일치라 길어지므로 일정 없는 변호사 섹션은 생략(skip_empty).
                 blocks, total = [], 0
                 for d in bundle_days:
-                    total += team_event_count(bundle_events[d], cfg, name)
-                    blocks.append(build_team_message(
-                        bundle_events[d], d, cfg, name,
-                        head=format_header_weekend(name, d), skip_empty=True,
-                    ))
+                    if kind == "변호사":
+                        total += len(lawyer_events(bundle_events[d], cfg, name))
+                        blocks.append(build_lawyer_message(
+                            bundle_events[d], d, cfg, name,
+                            head=format_header_weekend_lead(f"{name} 변호사", d),
+                        ))
+                    else:
+                        total += team_event_count(bundle_events[d], cfg, name)
+                        blocks.append(build_team_message(
+                            bundle_events[d], d, cfg, name,
+                            head=format_header_weekend(name, d), skip_empty=True,
+                        ))
                 message = "@everyone\n" + "\n\n".join(blocks) + "\n​"
                 count_desc = f"토·일·월 {total}건"
             elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만)

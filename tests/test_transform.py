@@ -21,6 +21,7 @@ from transform import (  # noqa: E402
     format_deadline,
     format_header,
     format_header_weekend,
+    format_header_weekend_lead,
     format_lawyer_head,
     format_timed,
     lawyer_events,
@@ -913,6 +914,20 @@ def test_team_message_skip_empty():
     msg = build_team_message([DEADLINE_EV], DAY, CFG, "송무1팀", skip_empty=True)
     assert "# 천기섭 변호사" in msg
     assert "# 정진실 변호사" not in msg
+
+
+def test_weekend_bundle_lawyer_block():
+    # 금요일 묶음의 일자별 머리말은 팀·개인 알림이 같은 양식.
+    sat = date(2026, 8, 15)
+    assert format_header_weekend_lead("이돈호 변호사", sat) == "📅 이돈호 변호사 토요일 일정(260815)"
+    assert format_header_weekend("송무1팀", sat) == "📅 [송무1팀] 토요일 일정(260815)"
+    # 개인 알림도 head 를 주면 그 머리말로 한 블록을 만든다(묶음용).
+    leave = {"summary": "조준혁 연차", "start": {"date": "2026-08-15"},
+             "description": "담당(직원): 조준혁,#휴가"}
+    msg = build_lawyer_message([leave], sat, CFG, "이돈호",
+                               head=format_header_weekend_lead("이돈호 변호사", sat))
+    assert msg == ("📅 이돈호 변호사 토요일 일정(260815)\n\n"
+                   "[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n조준혁 연차")
 
 
 def test_real_config_rosters_and_staff():

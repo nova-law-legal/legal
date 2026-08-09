@@ -9,7 +9,7 @@ on:
   workflow_dispatch:      # 외부 스케줄러 + 수동 실행 버튼
     inputs:
       date:
-        description: "기준 날짜(YYYY-MM-DD). 지정 시 --next-day 대신 이 날짜 기준으로 발송. 토요일 날짜를 주면 송무팀은 토·일·월 묶음. (외부 스케줄러는 미지정 → 평소대로 익일)"
+        description: "기준 날짜(YYYY-MM-DD). 지정 시 --next-day 대신 이 날짜 기준으로 발송. 토요일 날짜를 주면 세 알림 모두 토·일·월 묶음. (외부 스케줄러는 미지정 → 평소대로 익일)"
         required: false
         default: ""
 
@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Send next-day litigation-team schedule to Discord
+      - name: Send next-day schedule to Discord (이돈호 개인 + 송무1·2팀)
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
