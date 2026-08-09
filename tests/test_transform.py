@@ -835,29 +835,27 @@ def test_lawyer_section_head():
 
 
 def test_team_message_splits_by_lawyer():
-    # (v1.20.0) mention=True 는 '@everyone' 대신 변호사 섹션마다 본인 멘션을 넣는다.
+    # (v1.21.0) mention=True 는 다시 머리말 아랫줄 '@everyone' (개인 멘션 되돌림).
     msg = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무1팀",
                              lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
     assert msg.startswith(
-        "📅 [송무1팀] 내일 일정(260810, 월)\n\n"
-        "### 천기섭 변호사 내일 일정(260810, 월)\n@천기섭 변호사\n"
+        "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n"
+        "### 천기섭 변호사 내일 일정(260810, 월)\n"
     )
-    assert "@everyone" not in msg
     # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
     assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
-    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다(멘션은 계정명 미등록 시 '@이름').
-    assert "### 정진실 변호사 내일 일정(260810, 월)\n@정진실\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
+    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다.
+    assert "### 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
     assert "[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
 
 
 def test_lawyer_message_standalone():
     # 개인 알림 — '### ○○ 변호사' 섹션 머리말 없이 세 칸만, 본인 일정만 담는다.
-    # (v1.20.0) mention=True 는 '@everyone' 대신 본인 멘션.
     msg = build_lawyer_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "김정아",
                                day_label="내일 일정", mention=True)
     assert msg == (
-        "📅 김정아 변호사 내일 일정(260810, 월)\n@김정아\n\n"
+        "📅 김정아 변호사 내일 일정(260810, 월)\n@everyone\n\n"
         "[기한]\n없음\n\n"
         "[일정]\n10:00 [조장연] 변론기일 > 김정아\n        김포시법원 법정\n\n"
         "[휴무]\n없음"
@@ -867,13 +865,13 @@ def test_lawyer_message_standalone():
 
 
 def test_lawyer_message_without_deadlines():
-    # (v1.20.0) 이돈호 개인 알림은 [기한] 칸을 라벨째 뺀다. 멘션은 '이름 변호사' 계정명.
+    # (v1.20.0) 이돈호 개인 알림은 [기한] 칸을 라벨째 뺀다.
     donho_deadline = {"summary": "이혁준-보정명령 [불변기일]", "start": {"date": "2026-08-10"},
                       "description": "사건번호: 1\n의뢰인: 이혁준\n담당변호사: 이돈호\n내용: 보정명령"}
     msg = build_lawyer_message([donho_deadline], DAY, CFG, "이돈호",
                                day_label="내일 일정", mention=True, include_deadlines=False)
     assert msg == (
-        "📅 이돈호 변호사 내일 일정(260810, 월)\n@이돈호 변호사\n\n"
+        "📅 이돈호 변호사 내일 일정(260810, 월)\n@everyone\n\n"
         "[일정]\n없음\n\n"
         "[휴무]\n없음"
     )

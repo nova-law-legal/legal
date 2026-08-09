@@ -736,7 +736,9 @@ def team_sections(team: str, cfg: Config) -> list:
 def lawyer_mention(name: str, cfg: Config) -> str:
     """변호사 한 명의 디스코드 멘션 문자열(mentions.yaml 기준).
     · id 가 채워져 있으면 '<@ID>' — 실제 알림(핑)이 가는 진짜 멘션.
-    · 없으면 '@계정명' 텍스트(핑 없음). 계정명 미등록이면 '@이름'."""
+    · 없으면 '@계정명' 텍스트(핑 없음). 계정명 미등록이면 '@이름'.
+    (v1.21.0부터 알림 조립에는 미사용 — '@everyone' 복귀. 개인 멘션을
+     다시 도입할 때를 대비해 mentions.yaml 의 ID 명단과 함께 보관한다.)"""
     m = cfg.mentions.get(name) or {}
     if m.get("id"):
         return f"<@{m['id']}>"
@@ -813,16 +815,14 @@ def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
                          mention: bool = False, include_deadlines: bool = True) -> str:
     """변호사 한 명의 개인 알림 — 팀과 별개로 본인 일정만 담은 메시지.
     예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [일정]/[휴무].
-    mention=True 면 머리말 아랫줄에 '@everyone' 대신 그 변호사의 멘션을 넣는다(v1.20.0).
     include_deadlines=False 면 [기한] 칸을 뺀다(이돈호 개인 알림 요청사항).
-    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다."""
+    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다.
+    (v1.21.0: 개인 멘션(v1.20.0)을 되돌려 mention=True 는 다시 '@everyone')"""
     if head is None:
         lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
         head = format_header_lead(lead, day)
     text = _lawyer_body(lawyer_events(events, cfg, lawyer), cfg, include_deadlines)
-    if mention:
-        return _normalize(f"{head}\n{lawyer_mention(lawyer, cfg)}\n\n{text}")
-    return _wrap(head, text, False, inline=False)
+    return _wrap(head, text, mention, inline=False)
 
 
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,
@@ -830,11 +830,11 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
                        skip_empty: bool = False) -> str:
     """팀 알림 — 팀 안에서 변호사별 '### ○○ 변호사' 섹션으로 나눈 메시지.
 
-    mention=True 면(v1.20.0, '@everyone' 을 대체) 변호사 섹션마다 머리말 아랫줄에
-    그 변호사의 멘션(@계정명 또는 <@ID>)을 넣는다 — 팀 전체가 아니라 본인에게만 알림.
+    mention=True 면 머리말 아랫줄에 '@everyone' 을 넣는다.
+    (v1.21.0: 변호사별 개인 멘션(v1.20.0)을 되돌려 '@everyone' 으로 복귀)
     어느 변호사에도 배정되지 않지만 팀 알림 대상인 일정(공용 일정 등)은 맨 아래
-    '### 기타' 섹션에 모은다(있을 때만, 멘션 없음). skip_empty=True면 일정이 하나도
-    없는 변호사는 건너뛴다(금요일 저녁 토·일·월 묶음의 길이 절약용)."""
+    '### 기타' 섹션에 모은다(있을 때만). skip_empty=True면 일정이 하나도 없는
+    변호사는 건너뛴다(금요일 저녁 토·일·월 묶음의 길이 절약용)."""
     names = team_sections(team, cfg)
     buckets = {n: [] for n in names}
     others = []
@@ -847,9 +847,7 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
             others.append(ev)
 
     blocks = [
-        format_lawyer_head(n, day, day_label)
-        + (f"\n{lawyer_mention(n, cfg)}" if mention else "")
-        + "\n" + _lawyer_body(buckets[n], cfg)
+        format_lawyer_head(n, day, day_label) + "\n" + _lawyer_body(buckets[n], cfg)
         for n in names
         if not (skip_empty and not buckets[n])
     ]
@@ -859,7 +857,7 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
     text = "\n\n".join(blocks).strip() or "일정 없음"
     if head is None:
         head = format_header_lead(lead, day) if lead else format_header(day)
-    return _wrap(head, text, False, inline=False)
+    return _wrap(head, text, mention, inline=False)
 
 
 # --------------------------------------------------------------------------- #
