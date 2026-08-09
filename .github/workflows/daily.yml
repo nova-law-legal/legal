@@ -10,6 +10,10 @@ on:
   #   - cron: "0 22 * * *"   # UTC 22:00 == KST 07:00 (한국은 서머타임 없음)
   workflow_dispatch: {}   # 외부 스케줄러 + 수동 실행 버튼
 
+permissions:
+  contents: read
+  issues: write   # 자동 점검 경고·실패 보고 이슈 생성용
+
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -36,3 +40,27 @@ jobs:
           DISCORD_WEBHOOK_URL_SONGMU1: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU1 }}
           DISCORD_WEBHOOK_URL_SONGMU2: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU2 }}
         run: python main.py
+
+      # 자동 점검 경고가 있으면 이슈 생성 → GitHub 알림 메일로 관리자에게 통지
+      - name: Report ambiguous-data warnings as issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -s run-warnings.md ]; then
+            echo "" >> run-warnings.md
+            echo "실행 로그: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> run-warnings.md
+            gh issue create -R "$GITHUB_REPOSITORY" \
+              --title "[자동 점검] $(TZ=Asia/Seoul date +%F) 오전 알림 — 확인 필요 사항" \
+              --body-file run-warnings.md
+          fi
+
+      # 실행 실패 시 이슈 생성(GitHub 기본 실패 메일과 별도로 이력을 남긴다)
+      - name: Report failure as issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "[발송 실패] $(TZ=Asia/Seoul date +%F) 오전 알림 워크플로" \
+            --body "오전 알림 발송 실행이 실패했습니다. 실행 로그를 확인해 주세요: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

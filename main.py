@@ -37,6 +37,8 @@ from transform import (
     build_office_meeting_message,
     build_section_message,
     build_team_message,
+    collect_warnings,
+    evening_uncovered,
     format_header_weekend,
     format_header_weekend_lead,
     lawyer_events,
@@ -47,6 +49,39 @@ from transform import (
 )
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+
+# 자동 점검 경고를 적는 파일 — 내용이 있으면 워크플로가 GitHub 이슈를 생성해
+# 관리자(GitHub 알림 메일)에게 통지한다. (.gitignore 대상)
+WARNINGS_FILE = "run-warnings.md"
+
+
+def report_warnings(warns: list, label: str, dry_run: bool):
+    """점검 경고를 콘솔(stderr)에 출력하고, 실발송이면 WARNINGS_FILE 에 기록.
+
+    ※ 자동 점검은 '발송이 모두 끝난 뒤' 보조 보고용으로만 동작한다.
+      경고가 있어도(점검 코드에 오류가 나도) 알림 발송에는 영향을 주지 않는다
+      — 일정 알림 누락 방지가 항상 우선이기 때문."""
+    if not warns:
+        return
+    print(f"\n[자동 점검] {label} — 경고 {len(warns)}건", file=sys.stderr)
+    for w in warns:
+        print(f"- {w}", file=sys.stderr)
+    if dry_run:
+        return
+    with open(WARNINGS_FILE, "w", encoding="utf-8") as f:
+        f.write(
+            f"{label} 발송 시 자동 점검에서 아래 사항이 확인되었습니다.\n"
+            "(알림은 파악된 내용대로 이미 정상 발송되었으며, 아래는 확인·보완 "
+            "요청 사항입니다.)\n\n"
+        )
+        for w in warns:
+            f.write(f"- {w}\n")
+        f.write(
+            "\n---\n"
+            "조치 안내: 장소 별칭은 `config/locations.yaml`, 팀·담당 명단은 "
+            "`config/teams.yaml`·`config/staff.yaml`, 일정 입력 보완은 Lawware에서. "
+            "조치(또는 확인) 후 이 이슈를 닫아 주세요.\n"
+        )
 
 # 저녁 익일 알림 — 발송 대상과 순서.
 #   env_key 가 None 이면 기본 채널(DISCORD_WEBHOOK_URL)로,
@@ -103,6 +138,7 @@ def main():
     # Windows 한글 콘솔(cp949)에서 이모지/특수문자 출력 시 깨지지 않도록 UTF-8 고정.
     try:
         sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
 
@@ -187,6 +223,24 @@ def main():
                 sys.exit(f"{name} 웹훅 미설정 (DISCORD_WEBHOOK_URL{('/' + env_key) if env_key else ''})")
             send(webhook, message)
             print(f"[{name}] 전송 완료 ({day}, {count_desc})")
+
+        # 자동 점검 — 표기·분류가 애매한 일정을 찾아 경고(있으면 이슈 생성용 파일 기록).
+        # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.
+        try:
+            check = bundle_events if bundle else {day: events}
+            warns = []
+            for d in sorted(check):
+                tag = f"[{d.strftime('%m/%d')}] "
+                warns += [tag + w for w in collect_warnings(check[d], cfg)]
+                warns += [
+                    tag + f"오후 알림 미배정: '{(ev.get('summary') or '').strip()}' — "
+                    "담당변호사가 있으나 팀·개인·상담 알림 어디에도 실리지 않았습니다"
+                    "(명단 밖 이름 여부 확인 필요, 오전 전체 알림에는 표시됨)."
+                    for ev in evening_uncovered(check[d], cfg)
+                ]
+            report_warnings(warns, "오후(익일) 알림", args.dry_run)
+        except Exception as e:  # noqa: BLE001 — 점검 실패는 발송 실패가 아니다
+            print(f"[자동 점검] 점검 중 오류(발송에는 영향 없음): {e}", file=sys.stderr)
         return
 
     # 오전 전체 알림 — 팀 구분 없이, [기한]/[일정]/[휴무] 를 각각 별도 메시지로 3회 발송.
@@ -212,6 +266,7 @@ def main():
         print("\n\n".join(messages))
         for _, _, message, _ in team_messages:
             print("\n" + message)
+        report_warnings(collect_warnings(events, cfg), "오전 알림", True)
         return
 
     if not default_webhook:
@@ -230,6 +285,13 @@ def main():
             continue
         send(webhook, message)
         print(f"[{team}] 오전 팀 알림 전송 완료 ({day}, {count}건)")
+
+    # 자동 점검 — 표기가 애매한 일정 경고(있으면 이슈 생성용 파일 기록).
+    # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.
+    try:
+        report_warnings(collect_warnings(events, cfg), "오전 알림", args.dry_run)
+    except Exception as e:  # noqa: BLE001 — 점검 실패는 발송 실패가 아니다
+        print(f"[자동 점검] 점검 중 오류(발송에는 영향 없음): {e}", file=sys.stderr)
 
     print(f"전송 완료 ({day}, {len(events)}건)")
 

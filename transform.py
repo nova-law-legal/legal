@@ -914,3 +914,77 @@ def build_office_meeting_message(events: list, day: date, cfg: Config,
         lead = "[상담]" + (f" {day_label}" if day_label else "")
         head = format_header_lead(lead, day)
     return _wrap(head, text, mention, inline=False)
+
+
+# --------------------------------------------------------------------------- #
+# 자동 점검 — 오분류·누락으로 이어질 수 있는 애매한 데이터를 발송 시점에 탐지
+# (경고가 있으면 워크플로가 GitHub 이슈를 생성해 관리자에게 통지한다 — v1.22.0)
+# --------------------------------------------------------------------------- #
+# 자사 사무실로 의심되는 장소 단서 — locations.yaml 미등록 별칭 탐지용
+_OFFICE_HINTS = ("1006", "404", "인천", "학익", "아스테리움", "사무소")
+
+
+def collect_warnings(events: list, cfg: Config) -> list:
+    """표기·분류가 애매해질 수 있는 일정을 찾아 경고 문구 리스트로 돌려준다.
+
+    · 스마트/화상 접견인데 접견번호를 찾지 못한 경우(대면접견은 번호가 없을 수
+      있어 제외).
+    · [회의] 상담인데 장소가 비어 있거나, 자사 사무실로 보이는 별칭인데
+      locations.yaml 에 등록돼 있지 않아 상담 알림에서 빠질 수 있는 경우.
+    · 정식 기일의 출석변호사가 2명 이상 표기되어, 실제 출석자가 전원인지
+      일부인지 판단하기 어려운 경우(수령·복사 등 직원 수행 일정은 제외)."""
+    warns = []
+    for ev in events:
+        if is_leave(ev):
+            continue
+        title = (ev.get("summary") or "").strip()
+        fields = parse_description(ev.get("description", ""))
+        if is_full_gijil(fields) and not is_staff_errand(ev, fields):
+            names = _gijil_attendees(fields)
+            if len(names) >= 2:
+                warns.append(
+                    f"출석변호사 복수 표기: '{title}' — '{', '.join(names)}' 가 함께 "
+                    "적혀 있어 실제 출석자가 전원인지 일부인지 판단하기 어렵습니다. "
+                    "일부만 출석한다면 캘린더의 출석변호사 칸을 정리해 주세요."
+                )
+        if is_visit(ev) and ("스마트" in title or "화상" in title) \
+                and not _visit_number_sub(fields, ev.get("description", "")):
+            warns.append(
+                f"접견번호 미검출: '{title}' — 설명에 예약번호가 없거나 형식을 "
+                "인식하지 못했습니다. 캘린더 설명에 번호를 확인해 주세요."
+            )
+        if is_meeting(ev):
+            place = meeting_place(ev, cfg)
+            if not place:
+                warns.append(
+                    f"상담 장소 없음: '{title}' — 장소(구분)가 비어 있어 "
+                    "사무실 상담 알림에서 제외됩니다."
+                )
+            elif place not in OFFICE_MEETING_PLACES and any(h in place for h in _OFFICE_HINTS):
+                warns.append(
+                    f"사무실 별칭 미등록 의심: '{title}' 의 장소 '{place}' — "
+                    "자사 사무실이라면 config/locations.yaml 에 별칭을 추가해야 "
+                    "상담 알림에 포함됩니다."
+                )
+    return warns
+
+
+def evening_uncovered(events: list, cfg: Config,
+                      teams=("송무1팀", "송무2팀"), lawyers=("이돈호",)) -> list:
+    """오후 알림 어디에도 실리지 않는 '담당변호사가 있는' 일정을 찾는다.
+
+    담당변호사 칸에 이름이 있는데도 팀 알림·개인 알림·상담 알림 모두에서
+    빠지는 일정(명단 밖 이름, 퇴직자 표기 등)은 관리자가 확인할 필요가 있다.
+    담당변호사가 아예 없는 일정(운영팀 공지 등)과 휴무는 의도된 미포함이므로
+    경고하지 않는다."""
+    covered = set()
+    for t in teams:
+        covered.update(map(id, team_events(events, cfg, t)))
+    for l in lawyers:
+        covered.update(map(id, lawyer_events(events, cfg, l)))
+    covered.update(map(id, office_meeting_events(events, cfg)))
+    return [
+        ev for ev in events
+        if not is_leave(ev) and id(ev) not in covered
+        and _responsible_names(parse_description(ev.get("description", "")))
+    ]

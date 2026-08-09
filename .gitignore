@@ -9,3 +9,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# 자동 점검 경고(발송 시 생성, 워크플로가 이슈로 옮긴 뒤 폐기)
+run-warnings.md

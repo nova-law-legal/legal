@@ -18,6 +18,8 @@ from transform import (  # noqa: E402
     build_office_meeting_message,
     build_section_message,
     build_team_message,
+    collect_warnings,
+    evening_uncovered,
     event_in_team,
     event_in_team_by_staff,
     format_deadline,
@@ -1097,6 +1099,65 @@ def test_visit_number_without_label():
     # 기존 라벨 형태('접견번호 007504', '접견번호 : 007367')는 종전과 동일.
     labeled = dict(bare, description="접견번호 007504\n담당(변호사): 이돈호")
     assert _fmt(labeled)[1] == ["접견번호 : 007504"]
+
+
+# --------------------------------------------------------------------------- #
+# v1.22.0 — 자동 점검(애매한 데이터 경고)
+# --------------------------------------------------------------------------- #
+def test_collect_warnings_visit_number():
+    # 스마트/화상 접견인데 접견번호가 없으면 경고, 대면접견은 경고 없음.
+    smart = {"summary": "[남승규] 스마트접견",
+             "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+             "description": "담당(변호사): 이돈호"}
+    daemyeon = {"summary": "[정다혜] 대면접견",
+                "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+                "description": "담당(변호사): 김수인"}
+    warns = collect_warnings([smart, daemyeon], CFG)
+    assert len(warns) == 1 and "접견번호 미검출" in warns[0] and "남승규" in warns[0]
+    # 번호가 있으면 경고 없음.
+    ok = dict(smart, description="004627\n담당(변호사): 이돈호")
+    assert collect_warnings([ok], CFG) == []
+
+
+def test_collect_warnings_meeting_place():
+    cfg = load_config(CONFIG_DIR)
+    # 장소가 빈 [회의] → 경고. 미등록 사무실 별칭 의심 → 경고. 외부 장소 → 경고 없음.
+    empty = {"summary": "[회의] [김동현]방문상담", "description": "담당(변호사): 이돈호"}
+    alias = {"summary": "[회의] (아스테리움 10층) [최현준]방문상담",
+             "description": "구분: 아스테리움 10층\n담당(변호사): 이돈호"}
+    outside = {"summary": "[회의] (외부) [박설]미팅",
+               "description": "구분: 강남 카페\n담당(변호사): 천기섭"}
+    warns = collect_warnings([empty, alias, outside], cfg)
+    assert len(warns) == 2
+    assert any("상담 장소 없음" in w for w in warns)
+    assert any("별칭 미등록 의심" in w and "아스테리움 10층" in w for w in warns)
+
+
+def test_collect_warnings_multiple_attendees():
+    # 정식 기일에 출석변호사가 2명 이상 → 실제 출석자 확인 경고.
+    multi = {"summary": "김용민 [변론기일]",
+             "start": {"dateTime": "2026-08-10T10:40:00+09:00"},
+             "description": "사건번호: 1\n의뢰인: 김용민\n출석변호사: ▲이돈호,▲김정아\n내용: 변론기일"}
+    warns = collect_warnings([multi], CFG)
+    assert len(warns) == 1 and "출석변호사 복수 표기" in warns[0]
+    # 1명 출석·수령/복사(직원 수행) 일정은 경고 없음.
+    assert collect_warnings([GIJIL_EV], CFG) == []
+    errand = {"summary": "[전영상] 기록 수령",
+              "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
+              "description": "사건번호: 2\n출석변호사: 박준호,김정아\n"
+                             "담당(직원): 우서영\n내용: 기록 수령"}
+    assert collect_warnings([errand], CFG) == []
+
+
+def test_evening_uncovered():
+    # 명단 밖 변호사(퇴직자 등)만 담당인 일정 → 오후 알림 미배정 경고 대상.
+    unknown = {"summary": "[박설] 검토 회의", "description": "담당(변호사): 김성호"}
+    assert evening_uncovered([unknown], CFG) == [unknown]
+    # 팀·개인·상담 알림에 실리는 일정과 담당변호사 없는 일정(공지 등)·휴무는 제외.
+    notice = {"summary": "사무실 정기점검", "description": ""}
+    leave = {"summary": "손진영 연차", "description": "담당(직원): 손진영"}
+    donho = {"summary": "돈변님 일정", "description": "담당(변호사): 이돈호"}
+    assert evening_uncovered([GIJIL_EV, notice, leave, donho], CFG) == []
 
 
 def test_real_config_rosters_and_staff():
