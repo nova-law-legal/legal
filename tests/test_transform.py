@@ -13,6 +13,7 @@ CONFIG_DIR = os.path.join(ROOT, "config")
 
 from transform import (  # noqa: E402
     Config,
+    build_lawyer_message,
     build_message,
     build_section_message,
     build_team_message,
@@ -20,7 +21,9 @@ from transform import (  # noqa: E402
     format_deadline,
     format_header,
     format_header_weekend,
+    format_lawyer_head,
     format_timed,
+    lawyer_events,
     lawyer_owners,
     load_config,
     parse_description,
@@ -31,7 +34,6 @@ from transform import (  # noqa: E402
 CFG = Config(
     locations={},
     teams={
-        "대표변호사": ["이돈호"],
         "송무1팀": {
             "변호사": ["천기섭", "박정윤", "박준호", "김정아", "이종원"],
             "수습": ["신이나", "정희소", "이하영", "정진실"],
@@ -803,26 +805,47 @@ def test_morning_section_mention_only_on_one():
     assert "@everyone" not in build_section_message([], DAY, CFG, "기한")
 
 
-def test_team_sections_chair_first_without_duplicate():
-    # 대표변호사(이돈호)가 송무팀 맨 위에 붙고, 정변호사 → 수습변호사 순.
+def test_team_sections_seniors_then_trainees():
+    # 팀 섹션 순서는 정변호사 → 수습변호사. (대표변호사는 팀 알림에 끼지 않는다)
     assert team_sections("송무1팀", CFG) == [
-        "이돈호", "천기섭", "박정윤", "박준호", "김정아", "이종원",
+        "천기섭", "박정윤", "박준호", "김정아", "이종원",
         "신이나", "정희소", "이하영", "정진실",
     ]
-    # 본인 소속 팀(상담지원팀)에서는 중복 없이 한 번만.
-    assert team_sections("상담지원팀", CFG) == ["이돈호"]
+    assert "이돈호" not in team_sections("송무1팀", CFG)
+
+
+def test_lawyer_section_head():
+    # 팀 알림 안의 변호사 머리말에도 날짜가 붙는다. 라벨이 없으면 이름만.
+    assert format_lawyer_head("천기섭", DAY, "내일 일정") == "# 천기섭 변호사 내일 일정(260810, 월)"
+    assert format_lawyer_head("천기섭", DAY) == "# 천기섭 변호사"
 
 
 def test_team_message_splits_by_lawyer():
     msg = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무1팀",
-                             lead="[송무1팀] 내일 일정", mention=True)
-    assert msg.startswith("📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n# 이돈호 변호사\n")
+                             lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
+    assert msg.startswith(
+        "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n# 천기섭 변호사 내일 일정(260810, 월)\n"
+    )
     # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
     assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
-    # 일정이 없는 변호사도 세 칸을 그대로 보여준다.
-    assert "# 정진실 변호사\n[기한]\n\n[일정]\n\n[휴무]" in msg
+    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다.
+    assert "# 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
-    assert "# 천기섭 변호사\n[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n\n[휴무]" in msg
+    assert "[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
+
+
+def test_lawyer_message_standalone():
+    # 개인 알림 — '# ○○ 변호사' 섹션 머리말 없이 세 칸만, 본인 일정만 담는다.
+    msg = build_lawyer_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "김정아",
+                               day_label="내일 일정", mention=True)
+    assert msg == (
+        "📅 김정아 변호사 내일 일정(260810, 월)\n@everyone\n\n"
+        "[기한]\n없음\n\n"
+        "[일정]\n10:00 [조장연] 변론기일 > 김정아\n        김포시법원 법정\n\n"
+        "[휴무]\n없음"
+    )
+    # 본인과 무관한 일정(천기섭 담당 기한)은 들어오지 않는다.
+    assert lawyer_events([DEADLINE_EV, GIJIL_EV], CFG, "이돈호") == []
 
 
 def test_staff_leave_goes_to_their_lawyers():
@@ -833,10 +856,11 @@ def test_staff_leave_goes_to_their_lawyers():
     own = {"summary": "천기섭 특별휴가(오후반차)", "start": {"date": "2026-08-10"},
            "description": "담당(변호사): 천기섭"}
     assert lawyer_owners(own, names, CFG) == {"천기섭"}
-    # 대표변호사 담당직원의 휴무는 이돈호 섹션으로(송무팀 알림 맨 위에도 실림).
+    # 이돈호 담당직원의 휴무는 이돈호 개인 알림으로(송무팀 명단에는 안 잡힘).
     chair = {"summary": "조준혁 연차", "start": {"date": "2026-08-10"},
              "description": "담당(직원): 조준혁,#휴가"}
-    assert lawyer_owners(chair, names, CFG) == {"이돈호"}
+    assert lawyer_owners(chair, names, CFG) == set()
+    assert lawyer_owners(chair, ["이돈호"], CFG) == {"이돈호"}
 
 
 def test_team_message_other_bucket():
@@ -844,9 +868,38 @@ def test_team_message_other_bucket():
     tagged = {"summary": "상담지원팀 회의", "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
               "description": "담당(직원): #상담지원팀"}
     msg = build_team_message([tagged], DAY, CFG, "상담지원팀", lead="[상담지원팀] 내일 일정")
-    assert "# 기타\n[기한]\n\n[일정]\n09:00 상담지원팀 회의" in msg
+    assert "# 기타\n[기한]\n없음\n\n[일정]\n09:00 상담지원팀 회의" in msg
     # 팀과 무관한 일정은 '기타'에도 실리지 않는다.
     assert "# 기타" not in build_team_message([GIJIL_EV], DAY, CFG, "상담지원팀")
+
+
+def test_staff_errand_shows_first_staff():
+    # 기록 수령·복사·등사는 변호사가 아니라 담당직원 맨 앞 사람이 간다.
+    ev = {
+        "summary": "[전영상] 기록 수령",
+        "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
+        "description": "안산지원 재판부\n담당(변호사): 박준호,김정아,신이나,이하영\n담당(직원): 우서영,진정은",
+    }
+    assert _fmt(ev) == ("09:00 [전영상] 기록 수령 > 우서영", [])
+    # 팀 태그(#…)는 사람이 아니므로 건너뛴다.
+    ev2 = dict(ev, description="담당(변호사): 김태환\n담당(직원): #송무2팀,민은선,김영은")
+    assert _fmt(ev2)[0] == "09:00 [전영상] 기록 수령 > 민은선"
+    # 담당직원이 없으면 평소대로 담당변호사 표기.
+    ev3 = dict(ev, description="담당(변호사): 김태환")
+    assert _fmt(ev3)[0] == "09:00 [전영상] 기록 수령 > 김태환"
+    # 수령·복사·등사가 아닌 일정은 영향 없음.
+    ev4 = dict(ev, summary="[전영상] 사건 회의")
+    assert _fmt(ev4)[0] == "09:00 [전영상] 사건 회의 > 박준호, 김정아, 신이나, 이하영"
+
+
+def test_html_entities_unescaped():
+    # 구글 캘린더가 넘겨주는 '&amp;' 등이 사람이 읽는 글자로 나가야 한다.
+    ev = {"summary": "(회의) 개인정보 &amp; AI팀",
+          "start": {"dateTime": "2026-08-10T13:00:00+09:00"},
+          "description": "담당(변호사): 신이나"}
+    msg = build_section_message([ev], DAY, CFG, "일정")
+    assert "13:00 (회의) 개인정보 & AI팀 > 신이나" in msg
+    assert "&amp;" not in msg
 
 
 def test_team_event_count_no_double_count():
@@ -865,7 +918,6 @@ def test_team_message_skip_empty():
 def test_real_config_rosters_and_staff():
     # 실제 config/*.yaml 이 읽히고, 팀 명단과 담당직원 명단이 서로 맞는지(오타 방지).
     cfg = load_config(CONFIG_DIR)
-    assert cfg.chairs == ["이돈호"]
     for team in ("송무1팀", "송무2팀"):
         for name in team_sections(team, cfg):
             assert cfg.staff.get(name), f"{team}의 {name} 담당직원이 staff.yaml 에 없습니다"

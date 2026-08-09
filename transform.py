@@ -27,13 +27,17 @@
   · 섹션 순서  = 맨 위 [기한](종일 사건 기한·불변기일 등) → [일정](그 외 일정) →
                  맨 아래 [휴무](휴가·반차·연차 등 부재 일정)
 
-메시지 조립은 세 가지:
+  · 수령·복사·등사 = 변호사가 아니라 담당직원이 가는 일정 → '> 담당직원 맨 앞 사람'
+
+메시지 조립은 네 가지:
   · build_message         = 세 섹션을 한 통에 (기본 양식)
   · build_section_message = 오전 알림용, 한 섹션만 한 통에 (하루 3통)
-  · build_team_message    = 오후 팀별 알림용, 팀 안에서 '# ○○ 변호사' 로 나누고
+  · build_team_message    = 오후 팀 알림용, 팀 안에서 '# ○○ 변호사' 로 나누고
                             변호사마다 세 섹션을 모두 표기
+  · build_lawyer_message  = 오후 개인 알림용, 한 변호사의 세 섹션만
 """
 
+import html
 import os
 import re
 from datetime import date, datetime
@@ -55,6 +59,10 @@ NON_ATTEND = {"미입회", "미출석", "불출석", "불참", "공판청취", "
 # 선고기일 한정: 복대리·청취대리·선고청취대리·선고청취 등 대리출석 표기를 '청취대리'로 일원화.
 LISTEN_PROXY_TERMS = ("선고청취대리", "청취대리", "선고청취", "복대리")
 
+# 기록 수령·열람복사·등사 등 '변호사가 아니라 담당직원이 가는' 일정.
+# 이런 일정은 담당변호사가 여럿 달려 있어도 실제로 가는 사람은 담당직원 맨 앞 사람이다.
+STAFF_ERRAND_KW = ("수령", "복사", "등사")
+
 # 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
 LEAVE_KEYWORDS = ("휴가", "반차", "휴무", "연차")
@@ -68,7 +76,9 @@ _CIRCLED = {chr(0x2460 + i): str(i + 1) for i in range(20)}
 
 
 def _normalize(s: str) -> str:
-    return "".join(_CIRCLED.get(ch, ch) for ch in s)
+    """발송 직전 문자 정리 — 원문자(①)를 숫자로, 구글 캘린더가 넘겨주는 HTML 엔티티를
+    사람이 읽는 글자로(&amp;→&, &gt;→>). 제목에 '&'가 든 일정에서 필요하다."""
+    return html.unescape("".join(_CIRCLED.get(ch, ch) for ch in s))
 
 
 def _normalize_team(v):
@@ -101,19 +111,10 @@ def _normalize_staff(v):
 class Config:
     """장소 약칭 예외표·팀별 변호사 명단·변호사별 담당직원 명단 묶음."""
 
-    # teams.yaml 에서 팀이 아닌 설정 항목(팀 순회에서 제외한다)
-    TEAMS_RESERVED = ("대표변호사",)
-
     def __init__(self, locations: dict, teams: dict = None, staff: dict = None):
         self.locations = locations or {}
-        teams = dict(teams or {})
-        # 대표변호사: 모든 송무팀 알림 맨 위에 섹션을 함께 싣는 변호사(들)
-        chairs = teams.pop("대표변호사", None) or []
-        self.chairs = [chairs] if isinstance(chairs, str) else list(chairs)
-        for key in self.TEAMS_RESERVED:
-            teams.pop(key, None)
         # 팀명 -> {'변호사': 정변호사, '수습': 수습변호사, '태그': 담당직원 태그 매칭 여부}
-        self.teams = {t: _normalize_team(v) for t, v in teams.items()}
+        self.teams = {t: _normalize_team(v) for t, v in (teams or {}).items()}
         # 변호사명 -> [담당직원…]  (팀별 알림의 변호사별 [휴무] 배정에 사용)
         self.staff = {k: _normalize_staff(v) for k, v in (staff or {}).items()}
 
@@ -303,6 +304,23 @@ def _gijil_attendees(fields):
     return names or []
 
 
+def is_staff_errand(event: dict, fields: dict) -> bool:
+    """기록 수령·열람복사·등사 등 담당직원이 대신 가는 일정인지(제목·내용 키워드)."""
+    text = f"{event.get('summary') or ''} {fields.get('내용', '')}"
+    return any(k in text for k in STAFF_ERRAND_KW)
+
+
+def _staff_attendee(fields: dict):
+    """담당직원 명단의 맨 앞 사람(팀 태그 '#…' 은 건너뜀). 없으면 None.
+    수령·복사·등사 일정에서 실제로 가는 직원으로 본다."""
+    for key in ("담당직원", "담당(직원)"):
+        for name in re.split(r"[,\s]+", fields.get(key) or ""):
+            name = name.strip()
+            if name and not name.startswith("#"):
+                return name
+    return None
+
+
 _DAMDANG_PAREN_RE = re.compile(r"\(담당:\s*([^)]*)\)")
 
 
@@ -464,6 +482,9 @@ def format_visit(event: dict, fields: dict, cfg: Config, time: str):
 # --------------------------------------------------------------------------- #
 def format_timed(event: dict, fields: dict, cfg: Config):
     time = start_hhmm(event)
+    # 기록 수령·열람복사·등사 등은 담당변호사가 여럿이어도 실제로는 직원이 간다
+    # → 출석표기를 담당직원 맨 앞 사람으로 대체(담당직원이 없으면 평소대로).
+    errand = _staff_attendee(fields) if is_staff_errand(event, fields) else None
 
     if is_full_gijil(fields):
         client = extract_client(event.get("summary", ""), fields)
@@ -472,7 +493,9 @@ def format_timed(event: dict, fields: dict, cfg: Config):
         verb = verb_for_content(content)
 
         names = _normalize_listen_proxy(_gijil_attendees(fields), gtype)
-        if names:
+        if errand:
+            att = f" > {errand}"
+        elif names:
             att = " > " + _format_attendees(names)
         elif verb:
             att = f" > 미{verb}"
@@ -502,7 +525,10 @@ def format_timed(event: dict, fields: dict, cfg: Config):
     # 그 외 일정: 제목 그대로 + 담당(변호사)로 출석표기
     title = (event.get("summary") or "").strip()
     names = _attendee_names(fields.get("담당(변호사)"))
-    att = " > " + _format_attendees(names) if names else ""
+    if errand:
+        att = f" > {errand}"
+    else:
+        att = " > " + _format_attendees(names) if names else ""
     bigo = _bigo_sub(fields)
     return f"{time} {title}{att}", ([bigo] if bigo else [])
 
@@ -629,12 +655,17 @@ def build_section_message(events: list, day: date, cfg: Config, section: str,
 # 팀별 알림 — 팀 안에서 변호사별로 다시 나눈 양식
 # --------------------------------------------------------------------------- #
 def team_sections(team: str, cfg: Config) -> list:
-    """팀 알림에 실을 변호사 섹션 순서.
-    대표변호사(이돈호)를 맨 위에, 그다음 팀 정변호사 → 수습변호사 순.
-    대표변호사 본인이 소속된 팀(상담지원팀)에서는 중복 없이 한 번만."""
+    """팀 알림에 실을 변호사 섹션 순서 — 정변호사 먼저, 그다음 수습변호사."""
     tc = cfg.teams.get(team) or {}
-    names = list(tc.get("변호사") or []) + list(tc.get("수습") or [])
-    return [c for c in cfg.chairs if c not in names] + names
+    return list(tc.get("변호사") or []) + list(tc.get("수습") or [])
+
+
+def format_lawyer_head(name: str, day: date, day_label: str = None) -> str:
+    """팀 알림 안의 변호사 섹션 머리말.
+    예: '# 천기섭 변호사 내일 일정(260810, 월)'. day_label 이 없으면 이름만."""
+    if not day_label:
+        return f"# {name} 변호사"
+    return f"# {name} 변호사 {day_label}({day.strftime('%y%m%d')}, {WEEKDAYS[day.weekday()]})"
 
 
 def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
@@ -667,25 +698,39 @@ def team_event_count(events: list, cfg: Config, team: str) -> int:
 
 
 def _lawyer_body(events: list, cfg: Config) -> str:
-    """변호사 한 명 분량의 [기한]/[일정]/[휴무] 세 칸. 내용이 없어도 라벨은 남긴다
-    (그 변호사에게 정말 아무 일정이 없다는 것을 눈으로 확인할 수 있게)."""
+    """변호사 한 명 분량의 [기한]/[일정]/[휴무] 세 칸. 비어 있으면 '없음'을 적는다
+    (그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게)."""
     sec = section_bodies(events, cfg)
     out = []
     for name in SECTIONS:
         out.append(f"[{name}]")
-        out.extend(sec[name])
+        out.extend(sec[name] or ["없음"])
         out.append("")
     return "\n".join(out).rstrip()
 
 
+def lawyer_events(events: list, cfg: Config, lawyer: str) -> list:
+    """그 변호사 몫으로 잡히는 일정만 추린다(본인 담당·출석 + 담당직원 휴무)."""
+    return [ev for ev in events if lawyer_owners(ev, [lawyer], cfg)]
+
+
+def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
+                         day_label: str = None, mention: bool = False) -> str:
+    """변호사 한 명의 개인 알림 — 팀과 별개로 본인 일정만 담은 메시지.
+    예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [기한]/[일정]/[휴무]."""
+    lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
+    text = _lawyer_body(lawyer_events(events, cfg, lawyer), cfg)
+    return _wrap(format_header_lead(lead, day), text, mention, inline=False)
+
+
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,
-                       head: str = None, mention: bool = False,
+                       head: str = None, mention: bool = False, day_label: str = None,
                        skip_empty: bool = False) -> str:
     """팀 알림 — 팀 안에서 변호사별 '# ○○ 변호사' 섹션으로 나눈 메시지.
 
     어느 변호사에도 배정되지 않지만 팀 알림 대상인 일정(공용 일정 등)은 맨 아래
-    '# 기타' 섹션에 모은다. skip_empty=True면 일정이 하나도 없는 변호사는 건너뛴다
-    (금요일 저녁 토·일·월 묶음처럼 3일치를 이어붙일 때 길이를 줄이기 위함)."""
+    '# 기타' 섹션에 모은다(있을 때만). skip_empty=True면 일정이 하나도 없는 변호사는
+    건너뛴다(금요일 저녁 토·일·월 묶음처럼 3일치를 이어붙일 때 길이를 줄이기 위함)."""
     names = team_sections(team, cfg)
     buckets = {n: [] for n in names}
     others = []
@@ -698,7 +743,7 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
             others.append(ev)
 
     blocks = [
-        f"# {n} 변호사\n" + _lawyer_body(buckets[n], cfg)
+        format_lawyer_head(n, day, day_label) + "\n" + _lawyer_body(buckets[n], cfg)
         for n in names
         if not (skip_empty and not buckets[n])
     ]

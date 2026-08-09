@@ -30,22 +30,24 @@ from calendar_client import KST, fetch_events, sources_from_env
 from discord_sender import send
 from transform import (
     SECTIONS,
+    build_lawyer_message,
     build_section_message,
     build_team_message,
     format_header_weekend,
+    lawyer_events,
     load_config,
     team_event_count,
 )
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
-# 저녁 익일 알림 — 팀별 분류 순서. (전용 웹훅 없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
-# 상담지원팀 = 대표변호사(이돈호) 단독 알림. 송무1·2팀 알림에는 그 위에 대표변호사
-# 섹션이 한 번 더 실린다(teams.yaml 의 '대표변호사' 항목).
-EVENING_TEAMS = [
-    ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
-    ("송무1팀", "DISCORD_WEBHOOK_URL_SONGMU1"),
-    ("송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
+# 저녁 익일 알림 — 발송 대상과 순서. (전용 웹훅 없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
+#   ("변호사", 이름)  = 개인 알림. 본인 담당·출석 일정과 담당직원 휴무만 담는다.
+#   ("팀",   팀이름)  = 팀 알림. 팀 안에서 다시 변호사별 섹션으로 나뉜다.
+EVENING_TARGETS = [
+    ("변호사", "이돈호", "DISCORD_WEBHOOK_URL_SANGDAM"),
+    ("팀", "송무1팀", "DISCORD_WEBHOOK_URL_SONGMU1"),
+    ("팀", "송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
 ]
 
 # 오전 전체 알림에서 '@everyone' 을 붙일 섹션 (알림 3연타를 피해 한 번만 멘션)
@@ -113,35 +115,40 @@ def main():
             bundle_days = [day + timedelta(days=i) for i in range(3)]  # 토·일·월
             bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
 
-        for team, env_key in EVENING_TEAMS:
-            if bundle and team in WEEKEND_BUNDLE_TEAMS:
+        for kind, name, env_key in EVENING_TARGETS:
+            if bundle and name in WEEKEND_BUNDLE_TEAMS:
                 # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다.
                 # 3일치라 길어지므로 일정 없는 변호사 섹션은 생략(skip_empty).
                 blocks, total = [], 0
                 for d in bundle_days:
-                    total += team_event_count(bundle_events[d], cfg, team)
+                    total += team_event_count(bundle_events[d], cfg, name)
                     blocks.append(build_team_message(
-                        bundle_events[d], d, cfg, team,
-                        head=format_header_weekend(team, d), skip_empty=True,
+                        bundle_events[d], d, cfg, name,
+                        head=format_header_weekend(name, d), skip_empty=True,
                     ))
                 message = "@everyone\n" + "\n\n".join(blocks) + "\n​"
                 count_desc = f"토·일·월 {total}건"
-            else:
-                lead = f"[{team}]" + (f" {day_label}" if day_label else "")
-                message = build_team_message(
-                    events, day, cfg, team, lead=lead, mention=True,
+            elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만)
+                message = build_lawyer_message(
+                    events, day, cfg, name, day_label=day_label, mention=True,
                 ) + "\n​"
-                count_desc = f"{team_event_count(events, cfg, team)}건"
-            # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
+                count_desc = f"{len(lawyer_events(events, cfg, name))}건"
+            else:
+                lead = f"[{name}]" + (f" {day_label}" if day_label else "")
+                message = build_team_message(
+                    events, day, cfg, name, lead=lead, day_label=day_label, mention=True,
+                ) + "\n​"
+                count_desc = f"{team_event_count(events, cfg, name)}건"
+            # 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
             if args.dry_run:
                 print(message)
                 continue
             webhook = os.environ.get(env_key) or default_webhook
             if not webhook:
-                sys.exit(f"{team} 웹훅 미설정 (DISCORD_WEBHOOK_URL{'/' + env_key})")
+                sys.exit(f"{name} 웹훅 미설정 (DISCORD_WEBHOOK_URL{'/' + env_key})")
             send(webhook, message)
-            print(f"[{team}] 전송 완료 ({day}, {count_desc})")
+            print(f"[{name}] 전송 완료 ({day}, {count_desc})")
         return
 
     # 오전 전체 알림 — 팀 구분 없이, [기한]/[일정]/[휴무] 를 각각 별도 메시지로 3회 발송.
