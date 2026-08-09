@@ -27,6 +27,7 @@ from transform import (  # noqa: E402
     format_lawyer_head,
     format_timed,
     lawyer_events,
+    lawyer_mention,
     lawyer_owners,
     load_config,
     office_meeting_events,
@@ -55,6 +56,13 @@ CFG = Config(
         "박준호": {"주담당": "우서영", "부담당": "진정은"},
         "김태환": {"주담당": "민은선", "부담당": "김영은"},
         "이돈호": {"담당직원": ["조준혁", "윤태린"]},
+    },
+    # 계정명이 '이름 변호사' 꼴인 네 명만 등록 — 나머지는 '@이름' 기본값
+    mentions={
+        "이돈호": "이돈호 변호사",
+        "천기섭": "천기섭 변호사",
+        "신이나": "신이나 변호사",
+        "임현진": "임현진 변호사",
     },
 )
 
@@ -827,31 +835,60 @@ def test_lawyer_section_head():
 
 
 def test_team_message_splits_by_lawyer():
+    # (v1.20.0) mention=True 는 '@everyone' 대신 변호사 섹션마다 본인 멘션을 넣는다.
     msg = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무1팀",
                              lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
     assert msg.startswith(
-        "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n### 천기섭 변호사 내일 일정(260810, 월)\n"
+        "📅 [송무1팀] 내일 일정(260810, 월)\n\n"
+        "### 천기섭 변호사 내일 일정(260810, 월)\n@천기섭 변호사\n"
     )
+    assert "@everyone" not in msg
     # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
     assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
-    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다.
-    assert "### 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
+    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다(멘션은 계정명 미등록 시 '@이름').
+    assert "### 정진실 변호사 내일 일정(260810, 월)\n@정진실\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
     assert "[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
 
 
 def test_lawyer_message_standalone():
     # 개인 알림 — '### ○○ 변호사' 섹션 머리말 없이 세 칸만, 본인 일정만 담는다.
+    # (v1.20.0) mention=True 는 '@everyone' 대신 본인 멘션.
     msg = build_lawyer_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "김정아",
                                day_label="내일 일정", mention=True)
     assert msg == (
-        "📅 김정아 변호사 내일 일정(260810, 월)\n@everyone\n\n"
+        "📅 김정아 변호사 내일 일정(260810, 월)\n@김정아\n\n"
         "[기한]\n없음\n\n"
         "[일정]\n10:00 [조장연] 변론기일 > 김정아\n        김포시법원 법정\n\n"
         "[휴무]\n없음"
     )
     # 본인과 무관한 일정(천기섭 담당 기한)은 들어오지 않는다.
     assert lawyer_events([DEADLINE_EV, GIJIL_EV], CFG, "이돈호") == []
+
+
+def test_lawyer_message_without_deadlines():
+    # (v1.20.0) 이돈호 개인 알림은 [기한] 칸을 라벨째 뺀다. 멘션은 '이름 변호사' 계정명.
+    donho_deadline = {"summary": "이혁준-보정명령 [불변기일]", "start": {"date": "2026-08-10"},
+                      "description": "사건번호: 1\n의뢰인: 이혁준\n담당변호사: 이돈호\n내용: 보정명령"}
+    msg = build_lawyer_message([donho_deadline], DAY, CFG, "이돈호",
+                               day_label="내일 일정", mention=True, include_deadlines=False)
+    assert msg == (
+        "📅 이돈호 변호사 내일 일정(260810, 월)\n@이돈호 변호사\n\n"
+        "[일정]\n없음\n\n"
+        "[휴무]\n없음"
+    )
+    assert "[기한]" not in msg
+
+
+def test_lawyer_mention_formats():
+    # id 가 있으면 진짜 멘션(<@ID>), 없으면 '@계정명', 미등록이면 '@이름'.
+    cfg = Config(locations={}, mentions={
+        "김태환": {"계정명": "김태환", "id": 123456789},
+        "천기섭": "천기섭 변호사",
+    })
+    assert lawyer_mention("김태환", cfg) == "<@123456789>"
+    assert lawyer_mention("천기섭", cfg) == "@천기섭 변호사"
+    assert lawyer_mention("김수인", cfg) == "@김수인"
 
 
 def test_staff_leave_goes_to_their_lawyers():
@@ -1073,6 +1110,14 @@ def test_real_config_rosters_and_staff():
     assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
     assert cfg.staff["김수인"] == ["김영은", "김유빈"]
     assert "조준혁" in cfg.staff["이돈호"]
+    # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
+    for team in ("송무1팀", "송무2팀"):
+        for name in team_sections(team, cfg):
+            assert cfg.mentions.get(name, {}).get("계정명"), \
+                f"{name} 멘션 계정명이 mentions.yaml 에 없습니다"
+    assert cfg.mentions["이돈호"]["계정명"] == "이돈호 변호사"
+    for name in ("천기섭", "신이나", "임현진"):
+        assert cfg.mentions[name]["계정명"] == f"{name} 변호사"
 
 
 if __name__ == "__main__":

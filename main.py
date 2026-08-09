@@ -40,6 +40,7 @@ from transform import (
     format_header_weekend,
     format_header_weekend_lead,
     lawyer_events,
+    lawyer_mention,
     load_config,
     office_meeting_events,
     team_event_count,
@@ -144,6 +145,7 @@ def main():
                         blocks.append(build_lawyer_message(
                             bundle_events[d], d, cfg, name,
                             head=format_header_weekend_lead(f"{name} 변호사", d),
+                            include_deadlines=False,
                         ))
                     elif kind == "상담":
                         total += len(office_meeting_events(bundle_events[d], cfg))
@@ -156,12 +158,22 @@ def main():
                         blocks.append(build_team_message(
                             bundle_events[d], d, cfg, name,
                             head=format_header_weekend(name, d), skip_empty=True,
+                            mention=True,
                         ))
-                message = "@everyone\n" + "\n\n".join(blocks) + "\n​"
+                # 묶음 머리 멘션: 개인 알림은 본인 멘션, 상담은 @everyone,
+                # 팀 알림은 섹션마다 변호사 멘션이 들어가므로 머리 멘션 없음.
+                if kind == "변호사":
+                    prefix = lawyer_mention(name, cfg) + "\n"
+                elif kind == "상담":
+                    prefix = "@everyone\n"
+                else:
+                    prefix = ""
+                message = prefix + "\n\n".join(blocks) + "\n​"
                 count_desc = f"토·일·월 {total}건"
-            elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만)
+            elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만, [기한] 제외)
                 message = build_lawyer_message(
                     events, day, cfg, name, day_label=day_label, mention=True,
+                    include_deadlines=False,
                 ) + "\n​"
                 count_desc = f"{len(lawyer_events(events, cfg, name))}건"
             elif kind == "상담":  # 사무실 상담 알림(1006호·404호·인천)

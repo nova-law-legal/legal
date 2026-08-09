@@ -110,15 +110,30 @@ def _normalize_staff(v):
     return names
 
 
-class Config:
-    """장소 약칭 예외표·팀별 변호사 명단·변호사별 담당직원 명단 묶음."""
+def _normalize_mention(v):
+    """mentions.yaml 한 변호사의 값 → {'계정명': str, 'id': str}.
+    문자열이면 계정명으로만 해석. id 는 숫자(디스코드 사용자 ID) 문자열."""
+    if isinstance(v, str):
+        return {"계정명": v.strip(), "id": ""}
+    v = v or {}
+    return {
+        "계정명": str(v.get("계정명") or "").strip(),
+        "id": str(v.get("id") or "").strip(),
+    }
 
-    def __init__(self, locations: dict, teams: dict = None, staff: dict = None):
+
+class Config:
+    """장소 약칭 예외표·팀별 변호사 명단·변호사별 담당직원 명단·멘션 설정 묶음."""
+
+    def __init__(self, locations: dict, teams: dict = None, staff: dict = None,
+                 mentions: dict = None):
         self.locations = locations or {}
         # 팀명 -> {'변호사': 정변호사, '수습': 수습변호사, '태그': 담당직원 태그 매칭 여부}
         self.teams = {t: _normalize_team(v) for t, v in (teams or {}).items()}
         # 변호사명 -> [담당직원…]  (팀별 알림의 변호사별 [휴무] 배정에 사용)
         self.staff = {k: _normalize_staff(v) for k, v in (staff or {}).items()}
+        # 변호사명 -> {'계정명', 'id'}  (오후 알림의 '@변호사' 멘션에 사용)
+        self.mentions = {k: _normalize_mention(v) for k, v in (mentions or {}).items()}
 
 
 def load_config(config_dir: str) -> Config:
@@ -133,6 +148,7 @@ def load_config(config_dir: str) -> Config:
         _load("locations.yaml"),
         _load("teams.yaml", required=False),
         _load("staff.yaml", required=False),
+        _load("mentions.yaml", required=False),
     )
 
 
@@ -717,6 +733,16 @@ def team_sections(team: str, cfg: Config) -> list:
     return list(tc.get("변호사") or []) + list(tc.get("수습") or [])
 
 
+def lawyer_mention(name: str, cfg: Config) -> str:
+    """변호사 한 명의 디스코드 멘션 문자열(mentions.yaml 기준).
+    · id 가 채워져 있으면 '<@ID>' — 실제 알림(핑)이 가는 진짜 멘션.
+    · 없으면 '@계정명' 텍스트(핑 없음). 계정명 미등록이면 '@이름'."""
+    m = cfg.mentions.get(name) or {}
+    if m.get("id"):
+        return f"<@{m['id']}>"
+    return "@" + (m.get("계정명") or name)
+
+
 def format_lawyer_head(name: str, day: date, day_label: str = None) -> str:
     """팀 알림 안의 변호사 섹션 머리말. Discord 에서 '#'은 대제목이라 너무 커서
     가장 작은 제목인 '###' 을 쓴다. 예: '### 천기섭 변호사 내일 일정(260810, 월)'.
@@ -762,12 +788,15 @@ def team_event_count(events: list, cfg: Config, team: str) -> int:
     return len(team_events(events, cfg, team))
 
 
-def _lawyer_body(events: list, cfg: Config) -> str:
+def _lawyer_body(events: list, cfg: Config, include_deadlines: bool = True) -> str:
     """변호사 한 명 분량의 [기한]/[일정]/[휴무] 세 칸. 비어 있으면 '없음'을 적는다
-    (그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게)."""
+    (그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게).
+    include_deadlines=False 면 [기한] 칸을 라벨째 뺀다(이돈호 개인 알림용)."""
     sec = section_bodies(events, cfg)
     out = []
     for name in SECTIONS:
+        if name == "기한" and not include_deadlines:
+            continue
         out.append(f"[{name}]")
         out.extend(sec[name] or ["없음"])
         out.append("")
@@ -781,25 +810,31 @@ def lawyer_events(events: list, cfg: Config, lawyer: str) -> list:
 
 def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
                          day_label: str = None, head: str = None,
-                         mention: bool = False) -> str:
+                         mention: bool = False, include_deadlines: bool = True) -> str:
     """변호사 한 명의 개인 알림 — 팀과 별개로 본인 일정만 담은 메시지.
-    예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [기한]/[일정]/[휴무].
+    예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [일정]/[휴무].
+    mention=True 면 머리말 아랫줄에 '@everyone' 대신 그 변호사의 멘션을 넣는다(v1.20.0).
+    include_deadlines=False 면 [기한] 칸을 뺀다(이돈호 개인 알림 요청사항).
     head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다."""
     if head is None:
         lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
         head = format_header_lead(lead, day)
-    text = _lawyer_body(lawyer_events(events, cfg, lawyer), cfg)
-    return _wrap(head, text, mention, inline=False)
+    text = _lawyer_body(lawyer_events(events, cfg, lawyer), cfg, include_deadlines)
+    if mention:
+        return _normalize(f"{head}\n{lawyer_mention(lawyer, cfg)}\n\n{text}")
+    return _wrap(head, text, False, inline=False)
 
 
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,
                        head: str = None, mention: bool = False, day_label: str = None,
                        skip_empty: bool = False) -> str:
-    """팀 알림 — 팀 안에서 변호사별 '# ○○ 변호사' 섹션으로 나눈 메시지.
+    """팀 알림 — 팀 안에서 변호사별 '### ○○ 변호사' 섹션으로 나눈 메시지.
 
+    mention=True 면(v1.20.0, '@everyone' 을 대체) 변호사 섹션마다 머리말 아랫줄에
+    그 변호사의 멘션(@계정명 또는 <@ID>)을 넣는다 — 팀 전체가 아니라 본인에게만 알림.
     어느 변호사에도 배정되지 않지만 팀 알림 대상인 일정(공용 일정 등)은 맨 아래
-    '# 기타' 섹션에 모은다(있을 때만). skip_empty=True면 일정이 하나도 없는 변호사는
-    건너뛴다(금요일 저녁 토·일·월 묶음처럼 3일치를 이어붙일 때 길이를 줄이기 위함)."""
+    '### 기타' 섹션에 모은다(있을 때만, 멘션 없음). skip_empty=True면 일정이 하나도
+    없는 변호사는 건너뛴다(금요일 저녁 토·일·월 묶음의 길이 절약용)."""
     names = team_sections(team, cfg)
     buckets = {n: [] for n in names}
     others = []
@@ -812,7 +847,9 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
             others.append(ev)
 
     blocks = [
-        format_lawyer_head(n, day, day_label) + "\n" + _lawyer_body(buckets[n], cfg)
+        format_lawyer_head(n, day, day_label)
+        + (f"\n{lawyer_mention(n, cfg)}" if mention else "")
+        + "\n" + _lawyer_body(buckets[n], cfg)
         for n in names
         if not (skip_empty and not buckets[n])
     ]
@@ -822,7 +859,7 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
     text = "\n\n".join(blocks).strip() or "일정 없음"
     if head is None:
         head = format_header_lead(lead, day) if lead else format_header(day)
-    return _wrap(head, text, mention, inline=False)
+    return _wrap(head, text, False, inline=False)
 
 
 # --------------------------------------------------------------------------- #
