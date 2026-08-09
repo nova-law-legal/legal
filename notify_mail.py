@@ -30,10 +30,8 @@ def main():
     else:
         body = sys.stdin.read()
 
-    user = os.environ["GMAIL_USERNAME"].strip()
-    # 앱 비밀번호는 'abcd efgh ...'처럼 4자리씩 띄어 표시되지만 실제로는 공백 없는
-    # 16자리다. 띄운 채로 등록해도 동작하도록 공백을 제거한다.
-    password = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "").strip()
+    user = os.environ["GMAIL_USERNAME"]
+    password = os.environ["GMAIL_APP_PASSWORD"]
     to = os.environ.get("MAIL_TO") or user
 
     msg = MIMEText(body, "plain", "utf-8")
