@@ -15,6 +15,7 @@ from transform import (  # noqa: E402
     Config,
     build_lawyer_message,
     build_message,
+    build_office_meeting_message,
     build_section_message,
     build_team_message,
     event_in_team,
@@ -27,8 +28,10 @@ from transform import (  # noqa: E402
     lawyer_events,
     lawyer_owners,
     load_config,
+    office_meeting_events,
     parse_description,
     team_event_count,
+    team_events,
     team_sections,
 )
 
@@ -817,26 +820,27 @@ def test_team_sections_seniors_then_trainees():
 
 def test_lawyer_section_head():
     # 팀 알림 안의 변호사 머리말에도 날짜가 붙는다. 라벨이 없으면 이름만.
-    assert format_lawyer_head("천기섭", DAY, "내일 일정") == "# 천기섭 변호사 내일 일정(260810, 월)"
-    assert format_lawyer_head("천기섭", DAY) == "# 천기섭 변호사"
+    # (v1.17.0: '#' 대제목이 Discord 에서 너무 커서 소제목 '###' 으로 변경)
+    assert format_lawyer_head("천기섭", DAY, "내일 일정") == "### 천기섭 변호사 내일 일정(260810, 월)"
+    assert format_lawyer_head("천기섭", DAY) == "### 천기섭 변호사"
 
 
 def test_team_message_splits_by_lawyer():
     msg = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무1팀",
                              lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
     assert msg.startswith(
-        "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n# 천기섭 변호사 내일 일정(260810, 월)\n"
+        "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n### 천기섭 변호사 내일 일정(260810, 월)\n"
     )
     # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
     assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
     # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다.
-    assert "# 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
+    assert "### 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
     assert "[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
 
 
 def test_lawyer_message_standalone():
-    # 개인 알림 — '# ○○ 변호사' 섹션 머리말 없이 세 칸만, 본인 일정만 담는다.
+    # 개인 알림 — '### ○○ 변호사' 섹션 머리말 없이 세 칸만, 본인 일정만 담는다.
     msg = build_lawyer_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "김정아",
                                day_label="내일 일정", mention=True)
     assert msg == (
@@ -865,13 +869,13 @@ def test_staff_leave_goes_to_their_lawyers():
 
 
 def test_team_message_other_bucket():
-    # 어느 변호사에도 배정 안 되지만 팀 알림 대상인 일정은 맨 아래 '# 기타'로.
+    # 어느 변호사에도 배정 안 되지만 팀 알림 대상인 일정은 맨 아래 '### 기타'로.
     tagged = {"summary": "상담지원팀 회의", "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
               "description": "담당(직원): #상담지원팀"}
     msg = build_team_message([tagged], DAY, CFG, "상담지원팀", lead="[상담지원팀] 내일 일정")
-    assert "# 기타\n[기한]\n없음\n\n[일정]\n09:00 상담지원팀 회의" in msg
+    assert "### 기타\n[기한]\n없음\n\n[일정]\n09:00 상담지원팀 회의" in msg
     # 팀과 무관한 일정은 '기타'에도 실리지 않는다.
-    assert "# 기타" not in build_team_message([GIJIL_EV], DAY, CFG, "상담지원팀")
+    assert "### 기타" not in build_team_message([GIJIL_EV], DAY, CFG, "상담지원팀")
 
 
 def test_staff_errand_shows_first_staff():
@@ -912,8 +916,8 @@ def test_team_event_count_no_double_count():
 def test_team_message_skip_empty():
     # 금요일 묶음용 — 일정 없는 변호사 섹션은 생략한다.
     msg = build_team_message([DEADLINE_EV], DAY, CFG, "송무1팀", skip_empty=True)
-    assert "# 천기섭 변호사" in msg
-    assert "# 정진실 변호사" not in msg
+    assert "### 천기섭 변호사" in msg
+    assert "### 정진실 변호사" not in msg
 
 
 def test_weekend_bundle_lawyer_block():
@@ -928,6 +932,63 @@ def test_weekend_bundle_lawyer_block():
                                head=format_header_weekend_lead("이돈호 변호사", sat))
     assert msg == ("📅 이돈호 변호사 토요일 일정(260815)\n\n"
                    "[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n조준혁 연차")
+
+
+# --------------------------------------------------------------------------- #
+# v1.17.0 — 채널 분리: 오전 팀 알림(한 통), 사무실 상담 알림(1006호·404호·인천)
+# --------------------------------------------------------------------------- #
+def test_morning_team_message_combined():
+    # 오전 팀 알림 — 팀 일정 전체를 [기한]/[일정]/[휴무] 한 통으로(변호사별 분할 없음).
+    evs = team_events([DEADLINE_EV, GIJIL_EV], CFG, "송무1팀")
+    assert len(evs) == 2
+    msg = build_message(evs, DAY, CFG, lead="[송무1팀] 오늘 일정", mention=True)
+    assert msg.startswith(
+        "📅 [송무1팀] 오늘 일정(260810, 월)\n@everyone\n\n[기한]\n[홍길동] 항소이유서 제출기한"
+    )
+    assert "10:00 [조장연] 변론기일 > 김정아" in msg
+    assert "###" not in msg  # 오전 팀 알림은 변호사별 소제목 없이 한 덩어리
+    # 다른 팀 일정은 걸러진다.
+    assert team_events([DEADLINE_EV, GIJIL_EV], CFG, "송무2팀") == []
+
+
+def test_office_meeting_message():
+    # 사무실 상담 알림 — 1006호·404호·인천 [회의]만, 사무실별 '###' 섹션으로.
+    cfg = load_config(CONFIG_DIR)  # locations.yaml 의 사무실 별칭 정규화 필요
+    m1006 = {"summary": "[회의] (1006호) [강태오]상속 상담",
+             "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+             "description": "구분: 1006호\n담당(변호사): 이돈호"}
+    incheon = {"summary": "[회의] (인천) [박설]이혼 상담",
+               "start": {"dateTime": "2026-08-10T14:00:00+09:00"},
+               "description": "구분: 학익동\n담당(변호사): 김정아"}
+    outside = {"summary": "[회의] (외부) [김봉주]현장 미팅",
+               "start": {"dateTime": "2026-08-10T15:00:00+09:00"},
+               "description": "구분: 강남 카페\n담당(변호사): 천기섭"}
+    gijil = dict(GIJIL_EV)  # [회의]가 아닌 일정은 상담 알림에 실리지 않는다
+
+    picked = office_meeting_events([m1006, incheon, outside, gijil], cfg)
+    assert [ev["summary"] for ev in picked] == [m1006["summary"], incheon["summary"]]
+
+    msg = build_office_meeting_message([m1006, incheon, outside, gijil], DAY, cfg,
+                                       day_label="내일 일정", mention=True)
+    assert msg.startswith(
+        "📅 [상담] 내일 일정(260810, 월)\n@everyone\n\n"
+        "### 서울 1006호\n11:00 [강태오] 상속 상담 > 이돈호"
+    )
+    # 상담이 없는 사무실도 '없음'으로 표기(그 방이 비어 있음을 확인).
+    assert "### 서울 404호\n없음" in msg
+    assert "### 인천사무소\n14:00 [박설] 이혼 상담 > 김정아" in msg
+    # 섹션 제목이 곧 사무실 이름이므로 같은 장소 아랫줄은 중복 표기하지 않는다.
+    assert "        서울 1006호" not in msg
+    assert "김봉주" not in msg and "조장연" not in msg
+
+
+def test_office_meeting_weekend_head():
+    # 금요일 묶음용 — head 를 주면 그 머리말로 한 블록을 만든다.
+    cfg = load_config(CONFIG_DIR)
+    sat = date(2026, 8, 15)
+    msg = build_office_meeting_message([], sat, cfg,
+                                       head=format_header_weekend_lead("[상담]", sat))
+    assert msg.startswith("📅 [상담] 토요일 일정(260815)\n\n### 서울 1006호\n없음")
 
 
 def test_real_config_rosters_and_staff():

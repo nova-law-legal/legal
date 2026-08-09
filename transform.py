@@ -29,12 +29,14 @@
 
   · 수령·복사·등사 = 변호사가 아니라 담당직원이 가는 일정 → '> 담당직원 맨 앞 사람'
 
-메시지 조립은 네 가지:
-  · build_message         = 세 섹션을 한 통에 (기본 양식)
-  · build_section_message = 오전 알림용, 한 섹션만 한 통에 (하루 3통)
-  · build_team_message    = 오후 팀 알림용, 팀 안에서 '# ○○ 변호사' 로 나누고
-                            변호사마다 세 섹션을 모두 표기
-  · build_lawyer_message  = 오후 개인 알림용, 한 변호사의 세 섹션만
+메시지 조립은 다섯 가지:
+  · build_message                = 세 섹션을 한 통에 (기본 양식·오전 팀 알림)
+  · build_section_message        = 오전 전체 알림용, 한 섹션만 한 통에 (하루 3통)
+  · build_team_message           = 오후 팀 알림용, 팀 안에서 '### ○○ 변호사' 로 나누고
+                                   변호사마다 세 섹션을 모두 표기
+  · build_lawyer_message         = 오후 개인 알림용, 한 변호사의 세 섹션만
+  · build_office_meeting_message = 오후 사무실 상담 알림용, 1006호·404호·인천 사무소의
+                                   [회의] 방문상담만 사무실별 섹션으로
 """
 
 import html
@@ -667,11 +669,12 @@ def team_sections(team: str, cfg: Config) -> list:
 
 
 def format_lawyer_head(name: str, day: date, day_label: str = None) -> str:
-    """팀 알림 안의 변호사 섹션 머리말.
-    예: '# 천기섭 변호사 내일 일정(260810, 월)'. day_label 이 없으면 이름만."""
+    """팀 알림 안의 변호사 섹션 머리말. Discord 에서 '#'은 대제목이라 너무 커서
+    가장 작은 제목인 '###' 을 쓴다. 예: '### 천기섭 변호사 내일 일정(260810, 월)'.
+    day_label 이 없으면 이름만."""
     if not day_label:
-        return f"# {name} 변호사"
-    return f"# {name} 변호사 {day_label}({day.strftime('%y%m%d')}, {WEEKDAYS[day.weekday()]})"
+        return f"### {name} 변호사"
+    return f"### {name} 변호사 {day_label}({day.strftime('%y%m%d')}, {WEEKDAYS[day.weekday()]})"
 
 
 def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
@@ -693,14 +696,20 @@ def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
     return {n for n in names if n in who}
 
 
+def team_events(events: list, cfg: Config, team: str) -> list:
+    """그 팀 알림에 실리는 일정만 추린다(변호사 섹션 대상 + 팀 판정 '기타' 일정).
+    오전 팀 알림(build_message 로 한 통에 모아 발송)의 입력으로도 쓴다."""
+    names = team_sections(team, cfg)
+    return [
+        ev for ev in events
+        if lawyer_owners(ev, names, cfg) or event_in_team(ev, team, cfg.teams)
+    ]
+
+
 def team_event_count(events: list, cfg: Config, team: str) -> int:
     """그 팀 알림에 실제로 실리는 일정 수(로그용). 변호사 섹션 + '기타' 합계이며,
     공동담당으로 여러 섹션에 중복 표시되는 일정도 1건으로 센다."""
-    names = team_sections(team, cfg)
-    return sum(
-        1 for ev in events
-        if lawyer_owners(ev, names, cfg) or event_in_team(ev, team, cfg.teams)
-    )
+    return len(team_events(events, cfg, team))
 
 
 def _lawyer_body(events: list, cfg: Config) -> str:
@@ -758,9 +767,65 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
         if not (skip_empty and not buckets[n])
     ]
     if others:
-        blocks.append("# 기타\n" + _lawyer_body(others, cfg))
+        blocks.append("### 기타\n" + _lawyer_body(others, cfg))
 
     text = "\n\n".join(blocks).strip() or "일정 없음"
     if head is None:
         head = format_header_lead(lead, day) if lead else format_header(day)
+    return _wrap(head, text, mention, inline=False)
+
+
+# --------------------------------------------------------------------------- #
+# 사무실 상담 알림 — 1006호·404호·인천 사무소의 [회의] 방문상담만 모은 메시지
+# --------------------------------------------------------------------------- #
+# locations.yaml 정규화를 거친 자사 사무실 이름(별칭 추가·수정은 locations.yaml 에서).
+OFFICE_MEETING_PLACES = ("서울 1006호", "서울 404호", "인천사무소")
+
+
+def meeting_place(event: dict, cfg: Config) -> str:
+    """상담([회의]) 일정의 장소를 locations.yaml 예외표로 정규화해 돌려준다.
+    (format_meeting 의 장소 추출 순서와 동일: location → 장소 → 구분)"""
+    fields = parse_description(event.get("description", ""))
+    loc = (event.get("location") or fields.get("장소") or fields.get("구분") or "").strip()
+    return cfg.locations.get(loc, loc)
+
+
+def office_meeting_events(events: list, cfg: Config) -> list:
+    """자사 사무실(1006호·404호·인천)에서 잡힌 [회의] 방문상담 일정만 추린다."""
+    return [
+        ev for ev in events
+        if is_meeting(ev) and meeting_place(ev, cfg) in OFFICE_MEETING_PLACES
+    ]
+
+
+def build_office_meeting_message(events: list, day: date, cfg: Config,
+                                 day_label: str = None, head: str = None,
+                                 mention: bool = False) -> str:
+    """사무실 상담 알림 — '### 서울 1006호' 처럼 사무실별 섹션으로 나눠 시간순 표기.
+    상담이 없는 사무실도 '없음'으로 보여준다(그 방이 빈다는 것을 눈으로 확인할 수 있게).
+    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다."""
+    buckets = {p: [] for p in OFFICE_MEETING_PLACES}
+    for ev in office_meeting_events(events, cfg):
+        buckets[meeting_place(ev, cfg)].append(ev)
+
+    blocks = []
+    for place, evs in buckets.items():
+        timed = []
+        for ev in evs:
+            fields = parse_description(ev.get("description", ""))
+            line, subs = format_timed(ev, fields, cfg)
+            # 섹션 제목이 곧 사무실 이름이므로 같은 장소 아랫줄은 중복 → 뺀다.
+            subs = [s for s in subs if s != place]
+            timed.append((start_hhmm(ev) or "", line, subs))
+        timed.sort(key=lambda x: x[0])
+        lines = []
+        for _, line, subs in timed:
+            _emit(lines, line, subs)
+        body = "\n".join(_rstrip_blank(lines)) or "없음"
+        blocks.append(f"### {place}\n{body}")
+
+    text = "\n\n".join(blocks)
+    if head is None:
+        lead = "[상담]" + (f" {day_label}" if day_label else "")
+        head = format_header_lead(lead, day)
     return _wrap(head, text, mention, inline=False)
