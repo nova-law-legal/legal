@@ -996,27 +996,27 @@ def test_office_meeting_weekend_head():
 # v1.18.0 — 담당직원 소속팀 폴백, 라벨 없는 접견번호 인식
 # --------------------------------------------------------------------------- #
 def test_staff_team_fallback_for_donho_only_case():
-    # 담당변호사가 이돈호뿐인 사건은 담당직원 소속팀(staff.yaml 역매핑) 알림에도 실린다.
-    ev = {"summary": "[강성구] 스마트접견",
+    # 담당변호사가 이돈호뿐인 사건(접견 제외)은 담당직원 소속팀 알림에도 실린다.
+    ev = {"summary": "[강성구] 조사 동행",
           "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
-          "description": "005260\n담당(변호사): 이돈호\n담당(직원): 민은선,#송무2팀,#상담지원팀"}
+          "description": "담당(변호사): 이돈호\n담당(직원): 민은선,#송무2팀,#상담지원팀"}
     assert event_in_team_by_staff(ev, "송무2팀", CFG) is True    # 민은선=김태환 담당(2팀)
     assert event_in_team_by_staff(ev, "송무1팀", CFG) is False
-    assert [e["summary"] for e in team_events([ev], CFG, "송무2팀")] == ["[강성구] 스마트접견"]
+    assert [e["summary"] for e in team_events([ev], CFG, "송무2팀")] == ["[강성구] 조사 동행"]
     assert team_events([ev], CFG, "송무1팀") == []
     # 팀 알림에서는 어느 변호사 섹션도 아니므로 '### 기타'에 실린다.
     msg = build_team_message([ev], DAY, CFG, "송무2팀")
-    assert "### 기타\n[기한]\n없음\n\n[일정]\n11:00 [강성구] 스마트접견 > 이돈호" in msg
+    assert "### 기타\n[기한]\n없음\n\n[일정]\n11:00 [강성구] 조사 동행 > 이돈호" in msg
 
 
 def test_staff_team_fallback_not_for_songmu_cases():
     # 송무팀 변호사가 담당·출석인 사건은 직원 소속팀으로 새지 않는다(변호사 매핑 우선).
-    ev = {"summary": "[박정민] 스마트접견",
+    ev = {"summary": "[박정민] 기록 검토",
           "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
           "description": "담당(변호사): 김태환\n담당(직원): 우서영"}  # 우서영=1팀 직원
     assert event_in_team_by_staff(ev, "송무1팀", CFG) is False
     # 이돈호 사건이라도 담당직원이 이돈호 전속(조준혁 등)이면 송무팀 알림에 안 실린다.
-    own = {"summary": "[안호준] 스마트접견",
+    own = {"summary": "[안호준] 서면 회의",
            "start": {"dateTime": "2026-08-10T13:00:00+09:00"},
            "description": "담당(변호사): 이돈호\n담당(직원): 조준혁,#상담지원팀"}
     assert event_in_team_by_staff(own, "송무1팀", CFG) is False
@@ -1024,6 +1024,22 @@ def test_staff_team_fallback_not_for_songmu_cases():
     # 담당변호사가 아예 없는 일정(운영팀 등)도 종전대로 미포함.
     none = {"summary": "사무실 정기점검", "description": "담당(직원): 민은선"}
     assert event_in_team_by_staff(none, "송무2팀", CFG) is False
+
+
+def test_staff_team_fallback_skips_visits():
+    # 접견은 담당(변호사)=실제로 가는 변호사 기준 — 직원 소속팀 폴백을 적용하지 않는다.
+    # (이돈호 변호사가 가는 접견은 팀 직원이 붙어 있어도 개인 알림에만 실린다)
+    visit = {"summary": "[강성구] 스마트접견",
+             "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+             "description": "005260\n담당(변호사): 이돈호\n담당(직원): 민은선,#송무2팀"}
+    assert event_in_team_by_staff(visit, "송무2팀", CFG) is False
+    assert team_events([visit], CFG, "송무2팀") == []
+    assert lawyer_events([visit], CFG, "이돈호") == [visit]
+    # 송무팀 변호사가 가는 접견은 종전대로 그 변호사 팀·섹션에 실린다.
+    team_visit = {"summary": "[이상열] 스마트접견",
+                  "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+                  "description": "접견번호 : 007367\n담당(변호사): 김태환\n담당(직원): 민은선"}
+    assert event_in_team(team_visit, "송무2팀", CFG.teams) is True
 
 
 def test_visit_number_without_label():

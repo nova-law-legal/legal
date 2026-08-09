@@ -373,8 +373,10 @@ def event_in_team_by_staff(event: dict, team: str, cfg) -> bool:
       (변호사 기준 매핑이 항상 우선 — 다른 팀 사건이 직원 때문에 새지 않게).
     · 담당직원(사람 이름, '#' 태그 제외) 중 한 명이라도 이 팀 변호사의
       담당직원(staff.yaml)이면 포함. 팀 알림에서는 '### 기타' 섹션에 실린다.
-    · 휴무 일정은 제외(직원 휴무는 staff.yaml 로 변호사 섹션에 이미 배정된다)."""
-    if is_leave(event):
+    · 휴무 일정은 제외(직원 휴무는 staff.yaml 로 변호사 섹션에 이미 배정된다).
+    · 접견도 제외(v1.19.0) — 접견은 담당(변호사) 칸이 곧 '실제로 가는 변호사'라
+      그 변호사의 알림에만 싣는다. 사건 소속팀을 직원으로 추정하지 않는다."""
+    if is_leave(event) or is_visit(event):
         return False
     fields = parse_description(event.get("description", ""))
     resp = _responsible_names(fields)
