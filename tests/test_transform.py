@@ -7,22 +7,31 @@ import os
 import sys
 from datetime import date
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+CONFIG_DIR = os.path.join(ROOT, "config")
 
 from transform import (  # noqa: E402
     Config,
     build_message,
+    build_section_message,
+    build_team_message,
     event_in_team,
     format_deadline,
     format_header,
     format_header_weekend,
     format_timed,
+    lawyer_owners,
+    load_config,
     parse_description,
+    team_event_count,
+    team_sections,
 )
 
 CFG = Config(
     locations={},
     teams={
+        "대표변호사": ["이돈호"],
         "송무1팀": {
             "변호사": ["천기섭", "박정윤", "박준호", "김정아", "이종원"],
             "수습": ["신이나", "정희소", "이하영", "정진실"],
@@ -32,6 +41,13 @@ CFG = Config(
             "수습": ["임현진", "김윤수", "박건우", "한충호"],
         },
         "상담지원팀": {"변호사": ["이돈호"], "태그": True},
+    },
+    staff={
+        "천기섭": {"주담당": "임지혜", "부담당": "최수빈"},
+        "김정아": {"주담당": "우서영", "부담당": "진정은"},
+        "박준호": {"주담당": "우서영", "부담당": "진정은"},
+        "김태환": {"주담당": "민은선", "부담당": "김영은"},
+        "이돈호": {"담당직원": ["조준혁", "윤태린"]},
     },
 )
 
@@ -534,7 +550,7 @@ def test_mention_morning_inline():
 
 
 def test_mention_afternoon_block():
-    # 오후/익일 알림: 머리말 아랫줄 '@everyone' 곧바로 본문(빈 줄 없음)
+    # 오후/익일 알림: 머리말 아랫줄 '@everyone' + 빈 줄 + 본문 (v1.14.0에서 빈 줄 추가)
     ev = {
         "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
         "start": {"dateTime": "2026-06-15T10:00:00+09:00"},
@@ -542,7 +558,7 @@ def test_mention_afternoon_block():
                        "출석변호사: ▲김정아\n내용: 변론기일\n담당직원: #송무1팀",
     }
     msg = build_message([ev], date(2026, 6, 15), CFG, lead="[송무1팀] 내일 일정", mention=True)
-    assert msg.startswith("📅 [송무1팀] 내일 일정(260615, 월)\n@everyone\n[일정]\n")
+    assert msg.startswith("📅 [송무1팀] 내일 일정(260615, 월)\n@everyone\n\n[일정]\n")
 
 
 def test_event_in_team():
@@ -750,6 +766,112 @@ def test_build_message_head_override():
     head = format_header_weekend("송무2팀", date(2026, 6, 28))
     msg = build_message([], date(2026, 6, 28), CFG, head=head)
     assert msg == "📅 [송무2팀] 일요일 일정(260628)\n\n일정 없음"
+
+
+# --------------------------------------------------------------------------- #
+# v1.14.0 — 오전 [기한]/[일정]/[휴무] 3분할, 팀 알림의 변호사별 분할
+# --------------------------------------------------------------------------- #
+DEADLINE_EV = {
+    "summary": "홍길동 [제출기한]",
+    "start": {"date": "2026-08-10"},
+    "description": "사건번호: 1\n의뢰인: 홍길동(홍길동)\n담당변호사: 천기섭\n내용: 항소이유서 제출기한",
+}
+GIJIL_EV = {
+    "summary": "조장연 [변론기일]", "location": "김포시법원 법정",
+    "start": {"dateTime": "2026-08-10T10:00:00+09:00"},
+    "description": "사건번호: 2\n의뢰인: 조장연(조장연)\n장소: 김포시법원 법정\n"
+                   "담당변호사: 김정아,박준호\n출석변호사: ▲김정아\n내용: 변론기일",
+}
+STAFF_LEAVE_EV = {"summary": "우서영 연차", "start": {"date": "2026-08-10"},
+                  "description": "담당(변호사): 박준호,김정아\n담당(직원): #휴가,진정은"}
+DAY = date(2026, 8, 10)
+
+
+def test_morning_section_split():
+    # 오전 알림은 섹션마다 별도 메시지. 머리말 끝에 '[섹션]'이 붙는다.
+    msgs = {s: build_section_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, s) for s in
+            ("기한", "일정", "휴무")}
+    assert msgs["기한"] == "📅 260810 월요일 [기한]\n\n[홍길동] 항소이유서 제출기한"
+    assert msgs["일정"].startswith("📅 260810 월요일 [일정]\n\n10:00 [조장연] 변론기일 > 김정아")
+    # 빈 섹션도 '없음'으로 발송한다(그날 확인이 끝났음을 알 수 있게).
+    assert msgs["휴무"] == "📅 260810 월요일 [휴무]\n\n없음"
+
+
+def test_morning_section_mention_only_on_one():
+    # @everyone 은 [일정] 메시지에만 — 알림 3연타를 피한다.
+    assert "@everyone" in build_section_message([], DAY, CFG, "일정", mention=True)
+    assert "@everyone" not in build_section_message([], DAY, CFG, "기한")
+
+
+def test_team_sections_chair_first_without_duplicate():
+    # 대표변호사(이돈호)가 송무팀 맨 위에 붙고, 정변호사 → 수습변호사 순.
+    assert team_sections("송무1팀", CFG) == [
+        "이돈호", "천기섭", "박정윤", "박준호", "김정아", "이종원",
+        "신이나", "정희소", "이하영", "정진실",
+    ]
+    # 본인 소속 팀(상담지원팀)에서는 중복 없이 한 번만.
+    assert team_sections("상담지원팀", CFG) == ["이돈호"]
+
+
+def test_team_message_splits_by_lawyer():
+    msg = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무1팀",
+                             lead="[송무1팀] 내일 일정", mention=True)
+    assert msg.startswith("📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n# 이돈호 변호사\n")
+    # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
+    assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
+    # 일정이 없는 변호사도 세 칸을 그대로 보여준다.
+    assert "# 정진실 변호사\n[기한]\n\n[일정]\n\n[휴무]" in msg
+    # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
+    assert "# 천기섭 변호사\n[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n\n[휴무]" in msg
+
+
+def test_staff_leave_goes_to_their_lawyers():
+    # 직원 휴무는 staff.yaml 담당 변호사들의 [휴무] 칸에 함께 실린다.
+    names = team_sections("송무1팀", CFG)
+    assert lawyer_owners(STAFF_LEAVE_EV, names, CFG) == {"박준호", "김정아"}
+    # 변호사 본인의 휴무는 본인 섹션으로.
+    own = {"summary": "천기섭 특별휴가(오후반차)", "start": {"date": "2026-08-10"},
+           "description": "담당(변호사): 천기섭"}
+    assert lawyer_owners(own, names, CFG) == {"천기섭"}
+    # 대표변호사 담당직원의 휴무는 이돈호 섹션으로(송무팀 알림 맨 위에도 실림).
+    chair = {"summary": "조준혁 연차", "start": {"date": "2026-08-10"},
+             "description": "담당(직원): 조준혁,#휴가"}
+    assert lawyer_owners(chair, names, CFG) == {"이돈호"}
+
+
+def test_team_message_other_bucket():
+    # 어느 변호사에도 배정 안 되지만 팀 알림 대상인 일정은 맨 아래 '# 기타'로.
+    tagged = {"summary": "상담지원팀 회의", "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
+              "description": "담당(직원): #상담지원팀"}
+    msg = build_team_message([tagged], DAY, CFG, "상담지원팀", lead="[상담지원팀] 내일 일정")
+    assert "# 기타\n[기한]\n\n[일정]\n09:00 상담지원팀 회의" in msg
+    # 팀과 무관한 일정은 '기타'에도 실리지 않는다.
+    assert "# 기타" not in build_team_message([GIJIL_EV], DAY, CFG, "상담지원팀")
+
+
+def test_team_event_count_no_double_count():
+    # 공동담당으로 두 섹션에 실려도 건수는 1건.
+    assert team_event_count([GIJIL_EV], CFG, "송무1팀") == 1
+    assert team_event_count([GIJIL_EV], CFG, "송무2팀") == 0
+
+
+def test_team_message_skip_empty():
+    # 금요일 묶음용 — 일정 없는 변호사 섹션은 생략한다.
+    msg = build_team_message([DEADLINE_EV], DAY, CFG, "송무1팀", skip_empty=True)
+    assert "# 천기섭 변호사" in msg
+    assert "# 정진실 변호사" not in msg
+
+
+def test_real_config_rosters_and_staff():
+    # 실제 config/*.yaml 이 읽히고, 팀 명단과 담당직원 명단이 서로 맞는지(오타 방지).
+    cfg = load_config(CONFIG_DIR)
+    assert cfg.chairs == ["이돈호"]
+    for team in ("송무1팀", "송무2팀"):
+        for name in team_sections(team, cfg):
+            assert cfg.staff.get(name), f"{team}의 {name} 담당직원이 staff.yaml 에 없습니다"
+    assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
+    assert cfg.staff["김수인"] == ["김영은", "김유빈"]
+    assert "조준혁" in cfg.staff["이돈호"]
 
 
 if __name__ == "__main__":

@@ -28,16 +28,28 @@ except ImportError:
 
 from calendar_client import KST, fetch_events, sources_from_env
 from discord_sender import send
-from transform import build_message, event_in_team, format_header_weekend, load_config
+from transform import (
+    SECTIONS,
+    build_section_message,
+    build_team_message,
+    format_header_weekend,
+    load_config,
+    team_event_count,
+)
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
 # 저녁 익일 알림 — 팀별 분류 순서. (전용 웹훅 없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
+# 상담지원팀 = 대표변호사(이돈호) 단독 알림. 송무1·2팀 알림에는 그 위에 대표변호사
+# 섹션이 한 번 더 실린다(teams.yaml 의 '대표변호사' 항목).
 EVENING_TEAMS = [
+    ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
     ("송무1팀", "DISCORD_WEBHOOK_URL_SONGMU1"),
     ("송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
-    ("상담지원팀", "DISCORD_WEBHOOK_URL_SANGDAM"),
 ]
+
+# 오전 전체 알림에서 '@everyone' 을 붙일 섹션 (알림 3연타를 피해 한 번만 멘션)
+MORNING_MENTION_SECTION = "일정"
 
 # 금요일 저녁(익일=토요일) 묶음 대상 팀 — 토·일·월 3일치를 한 메시지로 보낸다.
 # (상담지원팀은 제외하고 평소대로 익일 하루치만 발송)
@@ -103,23 +115,23 @@ def main():
 
         for team, env_key in EVENING_TEAMS:
             if bundle and team in WEEKEND_BUNDLE_TEAMS:
-                # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다(일정 없는 날도 항상 표시).
+                # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다.
+                # 3일치라 길어지므로 일정 없는 변호사 섹션은 생략(skip_empty).
                 blocks, total = [], 0
                 for d in bundle_days:
-                    fd = [ev for ev in bundle_events[d] if event_in_team(ev, team, cfg.teams)]
-                    total += len(fd)
-                    blocks.append(build_message(fd, d, cfg, head=format_header_weekend(team, d)))
+                    total += team_event_count(bundle_events[d], cfg, team)
+                    blocks.append(build_team_message(
+                        bundle_events[d], d, cfg, team,
+                        head=format_header_weekend(team, d), skip_empty=True,
+                    ))
                 message = "@everyone\n" + "\n\n".join(blocks) + "\n​"
                 count_desc = f"토·일·월 {total}건"
             else:
-                filtered = [ev for ev in events if event_in_team(ev, team, cfg.teams)]
                 lead = f"[{team}]" + (f" {day_label}" if day_label else "")
-                # 상담지원팀 익일 알림은 [기한](종일 제출기한 등) 섹션을 넣지 않는다.
-                message = build_message(
-                    filtered, day, cfg, lead=lead, mention=True,
-                    include_deadlines=(team != "상담지원팀"),
+                message = build_team_message(
+                    events, day, cfg, team, lead=lead, mention=True,
                 ) + "\n​"
-                count_desc = f"{len(filtered)}건"
+                count_desc = f"{team_event_count(events, cfg, team)}건"
             # 팀 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
             # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
             if args.dry_run:
@@ -132,18 +144,28 @@ def main():
             print(f"[{team}] 전송 완료 ({day}, {count_desc})")
         return
 
-    # 단일 메시지(아침=오늘 전체, --next-day=내일 전체)
-    message = build_message(events, day, cfg, lead=day_label, mention=True)
+    # 오전 전체 알림 — 팀 구분 없이, [기한]/[일정]/[휴무] 를 각각 별도 메시지로 3회 발송.
+    # (섹션이 비어도 '없음'으로 발송해 그날 확인이 끝났음을 알 수 있게 한다)
+    messages = [
+        build_section_message(
+            events, day, cfg, section, lead=day_label,
+            mention=(section == MORNING_MENTION_SECTION),
+        )
+        for section in SECTIONS
+    ]
+
     if args.dry_run:
-        print(message)
+        print("\n\n".join(messages))
         return
 
     if not default_webhook:
         print("DISCORD_WEBHOOK_URL 미설정 — 전송 건너뜀. 결과:\n", file=sys.stderr)
-        print(message)
+        print("\n\n".join(messages))
         sys.exit(1)
 
-    send(default_webhook, message)
+    for section, message in zip(SECTIONS, messages):
+        send(default_webhook, message)
+        print(f"[{section}] 전송 완료 ({day})")
     print(f"전송 완료 ({day}, {len(events)}건)")
 
 
