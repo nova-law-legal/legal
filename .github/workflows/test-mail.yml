@@ -1,0 +1,35 @@
+name: test-mail
+
+# 보고 메일(Gmail SMTP) 설정 점검용 — 수동 실행 전용.
+# Actions 탭에서 Run workflow 를 누르면 MAIL_TO 로 테스트 메일 1통을 보낸다.
+# 일정 알림 발송과는 무관하다.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Send test mail
+        env:
+          GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: starlit@novalaw.kr
+        run: |
+          {
+            echo "기일 알림 보고 체계 테스트 메일입니다."
+            echo ""
+            echo "이 메일이 도착했다면 발신 계정(novalaw.legal@gmail.com)의"
+            echo "Gmail SMTP(앱 비밀번호) 설정이 정상 동작하는 것입니다."
+            echo ""
+            echo "발송 시각(KST): $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S')"
+          } | python notify_mail.py "[기일알림] 보고 메일 테스트"
