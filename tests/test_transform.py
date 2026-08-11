@@ -832,8 +832,9 @@ def test_team_sections_seniors_then_trainees():
 def test_lawyer_section_head():
     # 팀 알림 안의 변호사 머리말에도 날짜가 붙는다. 라벨이 없으면 이름만.
     # (v1.17.0: '#' 대제목이 Discord 에서 너무 커서 소제목 '###' 으로 변경)
-    assert format_lawyer_head("천기섭", DAY, "내일 일정") == "### 천기섭 변호사 내일 일정(260810, 월)"
-    assert format_lawyer_head("천기섭", DAY) == "### 천기섭 변호사"
+    # (v1.23.0: 이름 앞에 '⚖️' 이모지 추가)
+    assert format_lawyer_head("천기섭", DAY, "내일 일정") == "### ⚖️ 천기섭 변호사 내일 일정(260810, 월)"
+    assert format_lawyer_head("천기섭", DAY) == "### ⚖️ 천기섭 변호사"
 
 
 def test_team_message_splits_by_lawyer():
@@ -842,12 +843,12 @@ def test_team_message_splits_by_lawyer():
                              lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
     assert msg.startswith(
         "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n"
-        "### 천기섭 변호사 내일 일정(260810, 월)\n"
+        "### ⚖️ 천기섭 변호사 내일 일정(260810, 월)\n\n"
     )
     # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
     assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
-    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다.
-    assert "### 정진실 변호사 내일 일정(260810, 월)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
+    # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다. (섹션 제목 아래 빈 줄 하나)
+    assert "### ⚖️ 정진실 변호사 내일 일정(260810, 월)\n\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
     assert "[기한]\n[홍길동] 항소이유서 제출기한\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
 
@@ -911,7 +912,7 @@ def test_team_message_other_bucket():
     tagged = {"summary": "상담지원팀 회의", "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
               "description": "담당(직원): #상담지원팀"}
     msg = build_team_message([tagged], DAY, CFG, "상담지원팀", lead="[상담지원팀] 내일 일정")
-    assert "### 기타\n[기한]\n없음\n\n[일정]\n09:00 상담지원팀 회의" in msg
+    assert "### 기타\n\n[기한]\n없음\n\n[일정]\n09:00 상담지원팀 회의" in msg
     # 팀과 무관한 일정은 '기타'에도 실리지 않는다.
     assert "### 기타" not in build_team_message([GIJIL_EV], DAY, CFG, "상담지원팀")
 
@@ -954,8 +955,8 @@ def test_team_event_count_no_double_count():
 def test_team_message_skip_empty():
     # 금요일 묶음용 — 일정 없는 변호사 섹션은 생략한다.
     msg = build_team_message([DEADLINE_EV], DAY, CFG, "송무1팀", skip_empty=True)
-    assert "### 천기섭 변호사" in msg
-    assert "### 정진실 변호사" not in msg
+    assert "### ⚖️ 천기섭 변호사" in msg
+    assert "### ⚖️ 정진실 변호사" not in msg
 
 
 def test_weekend_bundle_lawyer_block():
@@ -1043,7 +1044,7 @@ def test_staff_team_fallback_for_donho_only_case():
     assert team_events([ev], CFG, "송무1팀") == []
     # 팀 알림에서는 어느 변호사 섹션도 아니므로 '### 기타'에 실린다.
     msg = build_team_message([ev], DAY, CFG, "송무2팀")
-    assert "### 기타\n[기한]\n없음\n\n[일정]\n11:00 [강성구] 조사 동행 > 이돈호" in msg
+    assert "### 기타\n\n[기한]\n없음\n\n[일정]\n11:00 [강성구] 조사 동행 > 이돈호" in msg
 
 
 def test_staff_team_fallback_not_for_songmu_cases():

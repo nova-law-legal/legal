@@ -747,11 +747,11 @@ def lawyer_mention(name: str, cfg: Config) -> str:
 
 def format_lawyer_head(name: str, day: date, day_label: str = None) -> str:
     """팀 알림 안의 변호사 섹션 머리말. Discord 에서 '#'은 대제목이라 너무 커서
-    가장 작은 제목인 '###' 을 쓴다. 예: '### 천기섭 변호사 내일 일정(260810, 월)'.
-    day_label 이 없으면 이름만."""
+    가장 작은 제목인 '###' 을 쓴다. 이름 앞에는 '⚖️' 를 붙인다.
+    예: '### ⚖️ 천기섭 변호사 내일 일정(260810, 월)'. day_label 이 없으면 이름만."""
     if not day_label:
-        return f"### {name} 변호사"
-    return f"### {name} 변호사 {day_label}({day.strftime('%y%m%d')}, {WEEKDAYS[day.weekday()]})"
+        return f"### ⚖️ {name} 변호사"
+    return f"### ⚖️ {name} 변호사 {day_label}({day.strftime('%y%m%d')}, {WEEKDAYS[day.weekday()]})"
 
 
 def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
@@ -847,12 +847,12 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
             others.append(ev)
 
     blocks = [
-        format_lawyer_head(n, day, day_label) + "\n" + _lawyer_body(buckets[n], cfg)
+        format_lawyer_head(n, day, day_label) + "\n\n" + _lawyer_body(buckets[n], cfg)
         for n in names
         if not (skip_empty and not buckets[n])
     ]
     if others:
-        blocks.append("### 기타\n" + _lawyer_body(others, cfg))
+        blocks.append("### 기타\n\n" + _lawyer_body(others, cfg))
 
     text = "\n\n".join(blocks).strip() or "일정 없음"
     if head is None:
