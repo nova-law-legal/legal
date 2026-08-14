@@ -18,14 +18,14 @@ from transform import (  # noqa: E402
     build_office_meeting_message,
     build_section_message,
     build_team_message,
+    build_team_weekend_message,
     collect_warnings,
     evening_uncovered,
     event_in_team,
     event_in_team_by_staff,
     format_deadline,
     format_header,
-    format_header_weekend,
-    format_header_weekend_lead,
+    format_header_weekend_bundle,
     format_lawyer_head,
     format_timed,
     lawyer_events,
@@ -772,16 +772,15 @@ def test_result_non_attend_overrides_listed_attorney():
 
 
 def test_weekend_bundle_header():
-    # 금요일 저녁 묶음 머리말: 요일 풀네임 + 괄호엔 날짜만(요일 약칭 없음).
-    assert format_header_weekend("송무1팀", date(2026, 6, 27)) == "📅 [송무1팀] 토요일 일정(260627)"
-    assert format_header_weekend("송무1팀", date(2026, 6, 28)) == "📅 [송무1팀] 일요일 일정(260628)"
-    assert format_header_weekend("송무2팀", date(2026, 6, 29)) == "📅 [송무2팀] 월요일 일정(260629)"
+    # 금요일 저녁 묶음 머리말: 묶음 전체에 하나, 요일 나열 + 날짜 범위.
+    # (v1.25.0: 일자별 머리말 '📅 [팀] 토요일 일정(…)'을 대체)
+    days = [date(2026, 6, 27), date(2026, 6, 28), date(2026, 6, 29)]
+    assert format_header_weekend_bundle("송무1팀", days) == "📅 [송무1팀] 토·일·월 일정(260627~260629)"
 
 
 def test_build_message_head_override():
     # head 직접 지정 시 그 머리말을 그대로 쓰고, 일정 없으면 '일정 없음' 본문.
-    head = format_header_weekend("송무2팀", date(2026, 6, 28))
-    msg = build_message([], date(2026, 6, 28), CFG, head=head)
+    msg = build_message([], date(2026, 6, 28), CFG, head="📅 [송무2팀] 일요일 일정(260628)")
     assert msg == "📅 [송무2팀] 일요일 일정(260628)\n\n일정 없음"
 
 
@@ -953,24 +952,33 @@ def test_team_event_count_no_double_count():
 
 
 def test_team_message_skip_empty():
-    # 금요일 묶음용 — 일정 없는 변호사 섹션은 생략한다.
-    msg = build_team_message([DEADLINE_EV], DAY, CFG, "송무1팀", skip_empty=True)
+    # 금요일 묶음 — 3일 내내 일정 없는 변호사 섹션은 생략한다.
+    # (v1.25.0: build_team_message 의 skip_empty 를 대체)
+    sat, sun, mon = date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17)
+    msg = build_team_weekend_message({sat: [], sun: [], mon: [DEADLINE_EV]}, CFG, "송무1팀")
     assert "### ⚖️ 천기섭 변호사" in msg
     assert "### ⚖️ 정진실 변호사" not in msg
+    # 팀 전체가 3일 내내 비면 본문은 '일정 없음' 한 줄.
+    empty = build_team_weekend_message({sat: [], sun: [], mon: []}, CFG, "송무2팀")
+    assert empty == "📅 [송무2팀] 토·일·월 일정(260815~260817)\n\n일정 없음"
 
 
 def test_weekend_bundle_lawyer_block():
-    # 금요일 묶음의 일자별 머리말은 팀·개인 알림이 같은 양식.
-    sat = date(2026, 8, 15)
-    assert format_header_weekend_lead("이돈호 변호사", sat) == "📅 이돈호 변호사 토요일 일정(260815)"
-    assert format_header_weekend("송무1팀", sat) == "📅 [송무1팀] 토요일 일정(260815)"
-    # 개인 알림도 head 를 주면 그 머리말로 한 블록을 만든다(묶음용).
-    leave = {"summary": "조준혁 연차", "start": {"date": "2026-08-15"},
-             "description": "담당(직원): 조준혁,#휴가"}
-    msg = build_lawyer_message([leave], sat, CFG, "이돈호",
-                               head=format_header_weekend_lead("이돈호 변호사", sat))
-    assert msg == ("📅 이돈호 변호사 토요일 일정(260815)\n\n"
-                   "[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n조준혁 연차")
+    # 금요일 묶음(v1.25.0) — 변호사 기준으로 묶고, 그 안에서 날짜 소제목으로 나눈다.
+    sat, sun, mon = date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17)
+    leave = {"summary": "임지혜 연차", "start": {"date": "2026-08-15"},
+             "description": "담당(직원): 임지혜,#휴가"}
+    msg = build_team_weekend_message({sat: [leave], sun: [], mon: [DEADLINE_EV]}, CFG, "송무1팀")
+    # 머리말은 묶음 전체에 하나(일자별 머리말 없음).
+    assert msg.startswith("📅 [송무1팀] 토·일·월 일정(260815~260817)\n\n")
+    # 같은 변호사가 날짜마다 반복 등장하지 않는다 — 섹션 하나 안에 날짜 소제목.
+    assert msg.count("### ⚖️ 천기섭 변호사") == 1
+    assert ("### ⚖️ 천기섭 변호사\n\n"
+            "◆ 토요일(260815)\n[휴무]\n임지혜 연차\n\n"
+            "◆ 월요일(260817)\n[기한]\n[홍길동] 항소이유서 제출기한") in msg
+    # 일정 없는 날(일요일)과 빈 칸([일정] 등)은 생략된다.
+    assert "일요일" not in msg
+    assert "[일정]" not in msg
 
 
 # --------------------------------------------------------------------------- #
@@ -1022,11 +1030,11 @@ def test_office_meeting_message():
 
 
 def test_office_meeting_weekend_head():
-    # 금요일 묶음용 — head 를 주면 그 머리말로 한 블록을 만든다.
+    # head 를 주면 그 머리말로 한 블록을 만든다.
+    # (v1.24.0에서 상담 알림이 금요일 묶음에서 빠져 head 지정은 범용 기능으로만 남음)
     cfg = load_config(CONFIG_DIR)
     sat = date(2026, 8, 15)
-    msg = build_office_meeting_message([], sat, cfg,
-                                       head=format_header_weekend_lead("[상담]", sat))
+    msg = build_office_meeting_message([], sat, cfg, head="📅 [상담] 토요일 일정(260815)")
     assert msg.startswith("📅 [상담] 토요일 일정(260815)\n\n### 서울 1006호\n없음")
 
 

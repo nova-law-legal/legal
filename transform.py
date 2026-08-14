@@ -627,16 +627,11 @@ def format_header_lead(lead: str, d: date) -> str:
     return f"📅 {lead}({d.strftime('%y%m%d')}, {WEEKDAYS[d.weekday()]})"
 
 
-def format_header_weekend_lead(lead: str, d: date) -> str:
-    """금요일 저녁 토·일·월 묶음 알림의 '일자별' 머리말.
-    예: '📅 [송무1팀] 토요일 일정(260815)', '📅 이돈호 변호사 토요일 일정(260815)'.
-    (요일은 풀네임, 괄호엔 날짜만)"""
-    return f"📅 {lead} {WEEKDAYS[d.weekday()]}요일 일정({d.strftime('%y%m%d')})"
-
-
-def format_header_weekend(team: str, d: date) -> str:
-    """금요일 저녁 팀 묶음 알림의 '일자별' 머리말. 예: '📅 [송무1팀] 토요일 일정(260815)'."""
-    return format_header_weekend_lead(f"[{team}]", d)
+def format_header_weekend_bundle(team: str, days: list) -> str:
+    """금요일 저녁 팀 묶음 알림의 머리말 — 묶음 전체에 하나(v1.25.0, 종전의
+    일자별 머리말을 대체). 예: '📅 [송무1팀] 토·일·월 일정(260815~260817)'."""
+    label = "·".join(WEEKDAYS[d.weekday()] for d in days)
+    return f"📅 [{team}] {label} 일정({days[0].strftime('%y%m%d')}~{days[-1].strftime('%y%m%d')})"
 
 
 def _emit(body, line, subs):
@@ -816,7 +811,7 @@ def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
     """변호사 한 명의 개인 알림 — 팀과 별개로 본인 일정만 담은 메시지.
     예: '📅 이돈호 변호사 내일 일정(260810, 월)' + [일정]/[휴무].
     include_deadlines=False 면 [기한] 칸을 뺀다(이돈호 개인 알림 요청사항).
-    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다.
+    head 를 주면 그 머리말을 그대로 쓴다.
     (v1.21.0: 개인 멘션(v1.20.0)을 되돌려 mention=True 는 다시 '@everyone')"""
     if head is None:
         lead = f"{lawyer} 변호사" + (f" {day_label}" if day_label else "")
@@ -826,15 +821,13 @@ def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
 
 
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,
-                       head: str = None, mention: bool = False, day_label: str = None,
-                       skip_empty: bool = False) -> str:
+                       head: str = None, mention: bool = False, day_label: str = None) -> str:
     """팀 알림 — 팀 안에서 변호사별 '### ○○ 변호사' 섹션으로 나눈 메시지.
 
     mention=True 면 머리말 아랫줄에 '@everyone' 을 넣는다.
     (v1.21.0: 변호사별 개인 멘션(v1.20.0)을 되돌려 '@everyone' 으로 복귀)
     어느 변호사에도 배정되지 않지만 팀 알림 대상인 일정(공용 일정 등)은 맨 아래
-    '### 기타' 섹션에 모은다(있을 때만). skip_empty=True면 일정이 하나도 없는
-    변호사는 건너뛴다(금요일 저녁 토·일·월 묶음의 길이 절약용)."""
+    '### 기타' 섹션에 모은다(있을 때만)."""
     names = team_sections(team, cfg)
     buckets = {n: [] for n in names}
     others = []
@@ -849,7 +842,6 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
     blocks = [
         format_lawyer_head(n, day, day_label) + "\n\n" + _lawyer_body(buckets[n], cfg)
         for n in names
-        if not (skip_empty and not buckets[n])
     ]
     if others:
         blocks.append("### 기타\n\n" + _lawyer_body(others, cfg))
@@ -858,6 +850,61 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
     if head is None:
         head = format_header_lead(lead, day) if lead else format_header(day)
     return _wrap(head, text, mention, inline=False)
+
+
+def _weekend_day_block(events: list, day: date, cfg: Config) -> str:
+    """묶음 안 하루치 블록 — '◆ 토요일(260815)' 날짜 소제목 + 내용 있는 칸만."""
+    sec = section_bodies(events, cfg)
+    out = [f"◆ {WEEKDAYS[day.weekday()]}요일({day.strftime('%y%m%d')})"]
+    for name in SECTIONS:
+        if not sec[name]:
+            continue
+        out.append(f"[{name}]")
+        out.extend(sec[name])
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> str:
+    """금요일 저녁 토·일·월 묶음 팀 알림 — 변호사 기준으로 묶고 그 안에서
+    날짜를 나눈다(v1.25.0 — 종전의 '날짜별 메시지 이어붙이기'를 대체.
+    같은 변호사가 날짜마다 반복 등장해 찾아가기 헷갈리던 문제 해소).
+
+    · 변호사 섹션 순서는 평일 팀 알림과 동일(정변호사 → 수습).
+    · 3일 내내 일정 없는 변호사는 생략(종전 skip_empty 동작 유지).
+    · 변호사 안에서도 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
+    · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에 같은 방식으로.
+    · 팀 전체가 3일 내내 비면 본문은 '일정 없음' 한 줄."""
+    days = sorted(events_by_day)
+    names = team_sections(team, cfg)
+    buckets = {n: {d: [] for d in days} for n in names}
+    others = {d: [] for d in days}
+    for d in days:
+        for ev in events_by_day[d]:
+            owners = lawyer_owners(ev, names, cfg)
+            if owners:
+                for n in owners:
+                    buckets[n][d].append(ev)
+            elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
+                others[d].append(ev)
+
+    def block(head, by_day):
+        day_blocks = [_weekend_day_block(by_day[d], d, cfg) for d in days if by_day[d]]
+        if not day_blocks:
+            return None
+        return head + "\n\n" + "\n\n".join(day_blocks)
+
+    blocks = []
+    for n in names:
+        b = block(format_lawyer_head(n, days[0]), buckets[n])
+        if b:
+            blocks.append(b)
+    other = block("### 기타", others)
+    if other:
+        blocks.append(other)
+
+    text = "\n\n".join(blocks).strip() or "일정 없음"
+    return _wrap(format_header_weekend_bundle(team, days), text, mention=False, inline=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -888,7 +935,7 @@ def build_office_meeting_message(events: list, day: date, cfg: Config,
                                  mention: bool = False) -> str:
     """사무실 상담 알림 — '### 서울 1006호' 처럼 사무실별 섹션으로 나눠 시간순 표기.
     상담이 없는 사무실도 '없음'으로 보여준다(그 방이 빈다는 것을 눈으로 확인할 수 있게).
-    head 를 주면(금요일 묶음의 일자별 머리말 등) 그 머리말을 그대로 쓴다."""
+    head 를 주면 그 머리말을 그대로 쓴다."""
     buckets = {p: [] for p in OFFICE_MEETING_PLACES}
     for ev in office_meeting_events(events, cfg):
         buckets[meeting_place(ev, cfg)].append(ev)
