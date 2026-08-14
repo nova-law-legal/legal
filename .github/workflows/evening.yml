@@ -9,7 +9,11 @@ on:
   workflow_dispatch:      # 외부 스케줄러 + 수동 실행 버튼
     inputs:
       date:
-        description: "기준 날짜(YYYY-MM-DD). 지정 시 --next-day 대신 이 날짜 기준으로 발송. 토요일 날짜를 주면 세 알림 모두 토·일·월 묶음. (외부 스케줄러는 미지정 → 평소대로 익일)"
+        description: "기준 날짜(YYYY-MM-DD). 지정 시 --next-day 대신 이 날짜 기준으로 발송. 토요일 날짜를 주면 팀 알림은 토·일·월 묶음. (외부 스케줄러는 미지정 → 평소대로 익일)"
+        required: false
+        default: ""
+      only:
+        description: "특정 대상만 재발송(이돈호/상담/송무1팀/송무2팀). 미지정 시 전체 발송. 재발송 시에는 자동 점검을 건너뛴다."
         required: false
         default: ""
 
@@ -42,11 +46,16 @@ jobs:
           DISCORD_WEBHOOK_URL_SONGMU1: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU1 }}
           DISCORD_WEBHOOK_URL_SONGMU2: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU2 }}
         run: |
+          ARGS=(--teams)
           if [ -n "${{ inputs.date }}" ]; then
-            python main.py --date "${{ inputs.date }}" --teams
+            ARGS+=(--date "${{ inputs.date }}")
           else
-            python main.py --next-day --teams
+            ARGS+=(--next-day)
           fi
+          if [ -n "${{ inputs.only }}" ]; then
+            ARGS+=(--only "${{ inputs.only }}")
+          fi
+          python main.py "${ARGS[@]}"
 
       # 자동 점검 경고 보고 — 이슈(이력용) + 관리자 메일(통지용, Gmail SMTP).
       # 메일은 GMAIL_APP_PASSWORD 시크릿이 등록된 경우에만 발송된다.

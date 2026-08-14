@@ -108,7 +108,9 @@ MORNING_TEAM_TARGETS = [
 MORNING_MENTION_SECTION = "일정"
 
 # 금요일 저녁(익일=토요일) 묶음 대상 — 토·일·월 3일치를 한 메시지로 보낸다.
-WEEKEND_BUNDLE_TARGETS = {"이돈호", "상담", "송무1팀", "송무2팀"}
+# (v1.24.0) 이돈호 개인·상담 알림은 묶음에서 제외 — 저녁 알림이 주말에도 매일 돌므로
+# 금요일에도 평일처럼 익일(토요일) 것만 보낸다. 팀 알림만 3일치 묶음 유지.
+WEEKEND_BUNDLE_TARGETS = {"송무1팀", "송무2팀"}
 
 
 def main():
@@ -133,6 +135,11 @@ def main():
         action="store_true",
         help="송무1/2팀·상담지원팀별로 분류해 팀마다 따로 발송",
     )
+    parser.add_argument(
+        "--only",
+        metavar="대상",
+        help="--teams 발송 대상 중 하나만 발송(재발송용). 예: --only 송무2팀",
+    )
     args = parser.parse_args()
 
     # Windows 한글 콘솔(cp949)에서 이모지/특수문자 출력 시 깨지지 않도록 UTF-8 고정.
@@ -141,6 +148,13 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+
+    if args.only:
+        valid = [name for _, name, _ in EVENING_TARGETS]
+        if not args.teams:
+            sys.exit("--only 는 --teams 와 함께만 사용할 수 있습니다.")
+        if args.only not in valid:
+            sys.exit(f"--only 대상이 없습니다: {args.only} (가능: {', '.join(valid)})")
 
     cfg = load_config(CONFIG_DIR)
     sources = sources_from_env()
@@ -170,6 +184,8 @@ def main():
             bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
 
         for kind, name, env_key in EVENING_TARGETS:
+            if args.only and name != args.only:
+                continue
             if bundle and name in WEEKEND_BUNDLE_TARGETS:
                 # 토/일/월 각 블록을 일자별 머리말과 함께 이어붙인다.
                 # 팀 알림은 3일치라 길어지므로 일정 없는 변호사 섹션은 생략(skip_empty).
@@ -226,6 +242,9 @@ def main():
 
         # 자동 점검 — 표기·분류가 애매한 일정을 찾아 경고(있으면 이슈 생성용 파일 기록).
         # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.
+        # (--only 재발송 시에는 생략 — 정기 발송 때 이미 점검했으므로 이슈 중복 방지)
+        if args.only:
+            return
         try:
             check = bundle_events if bundle else {day: events}
             warns = []
