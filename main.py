@@ -28,16 +28,18 @@ try:
 except ImportError:
     pass
 
-from calendar_client import KST, fetch_events, sources_from_env
+from calendar_client import KST, fetch_events, fetch_holidays, sources_from_env
 from discord_sender import send
 from transform import (
     SECTIONS,
+    WEEKDAYS,
     build_lawyer_message,
     build_message,
     build_office_meeting_message,
     build_section_message,
     build_team_message,
     build_team_weekend_message,
+    bundle_days_from,
     collect_warnings,
     evening_uncovered,
     lawyer_events,
@@ -106,9 +108,10 @@ MORNING_TEAM_TARGETS = [
 # 오전 전체 알림에서 '@everyone' 을 붙일 섹션 (알림 3연타를 피해 한 번만 멘션)
 MORNING_MENTION_SECTION = "일정"
 
-# 금요일 저녁(익일=토요일) 묶음 대상 — 토·일·월 3일치를 한 메시지로 보낸다.
+# 휴일 묶음 대상 — 익일이 휴일(주말·공휴일)이면 이어지는 휴일 전부 + 다음
+# 영업일까지 한 메시지로 묶는다(v1.26.0. 종전엔 금요일→토·일·월 고정).
 # (v1.24.0) 이돈호 개인·상담 알림은 묶음에서 제외 — 저녁 알림이 주말에도 매일 돌므로
-# 금요일에도 평일처럼 익일(토요일) 것만 보낸다. 팀 알림만 3일치 묶음 유지.
+# 휴일 전날에도 평일처럼 익일 것만 보낸다. 팀 알림만 묶음 유지.
 WEEKEND_BUNDLE_TARGETS = {"송무1팀", "송무2팀"}
 
 
@@ -174,13 +177,21 @@ def main():
 
     # 송무 팀별 분류 발송 모드
     if args.teams:
-        # 금요일 저녁(익일=토요일) → 송무1/2팀은 토·일·월 3일치를 한 메시지로 묶는다.
-        # 묶음 대상이면 토·일·월 각 날짜의 일정을 미리 한 번씩만 조회해 둔다.
-        bundle = day.weekday() == 5  # 대상일이 토요일 == 금요일 저녁 실행
-        bundle_days, bundle_events = [], {}
-        if bundle:
-            bundle_days = [day + timedelta(days=i) for i in range(3)]  # 토·일·월
-            bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
+        # 대상일(익일)이 휴일(주말·공휴일)이면 이어지는 휴일 전부 + 다음 영업일까지
+        # 송무1/2팀은 한 메시지로 묶는다(v1.26.0 — 종전 '금요일→토·일·월 고정' 대체).
+        # 예: 월요일이 대체공휴일인 금요일 저녁 → 토·일·월·화,
+        #     수요일이 공휴일인 화요일 저녁 → 수·목.
+        # 공휴일은 구글 공식 휴일 캘린더에서 조회하되, 조회가 실패해도 발송은
+        # 멈추지 않는다 — 주말만으로 묶음을 판단(일정 알림 누락 방지가 항상 우선).
+        try:
+            holidays = fetch_holidays(sources, day, day + timedelta(days=14))
+        except Exception as e:  # noqa: BLE001 — 공휴일 조회 실패는 발송 실패가 아니다
+            print(f"[공휴일] 휴일 캘린더 조회 실패 — 주말 기준으로만 묶음 판단: {e}",
+                  file=sys.stderr)
+            holidays = set()
+        bundle_days = bundle_days_from(day, holidays)
+        bundle = bool(bundle_days)
+        bundle_events = {d: fetch_events(sources, day=d)[0] for d in bundle_days}
 
         for kind, name, env_key in EVENING_TARGETS:
             if args.only and name != args.only:
@@ -191,7 +202,8 @@ def main():
                 # 변호사·날·칸은 생략해 길이를 줄인다.
                 total = sum(team_event_count(bundle_events[d], cfg, name) for d in bundle_days)
                 message = "@everyone\n" + build_team_weekend_message(bundle_events, cfg, name) + "\n​"
-                count_desc = f"토·일·월 {total}건"
+                label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)
+                count_desc = f"{label} {total}건"
             elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만, [기한] 제외)
                 message = build_lawyer_message(
                     events, day, cfg, name, day_label=day_label, mention=True,

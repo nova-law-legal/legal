@@ -42,7 +42,7 @@
 import html
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -627,9 +627,25 @@ def format_header_lead(lead: str, d: date) -> str:
     return f"📅 {lead}({d.strftime('%y%m%d')}, {WEEKDAYS[d.weekday()]})"
 
 
+def bundle_days_from(start: date, holidays: set) -> list:
+    """저녁(익일) 알림의 묶음 대상일 계산 — 익일(start)이 휴일(주말·공휴일)이면
+    이어지는 휴일 전부와 그다음 첫 영업일까지를 묶는다(v1.26.0, 종전의
+    '금요일 → 토·일·월 고정' 규칙을 대체).
+    예: 토요일 시작·월요일이 대체공휴일 → [토,일,월,화] / 공휴일 수요일 → [수,목].
+    익일이 영업일이면 빈 리스트(평소대로 하루치 발송)."""
+    days, d = [], start
+    while d.weekday() >= 5 or d in holidays:
+        days.append(d)
+        d += timedelta(days=1)
+    if days:
+        days.append(d)  # 휴일 다음 첫 영업일까지 포함
+    return days
+
+
 def format_header_weekend_bundle(team: str, days: list) -> str:
-    """금요일 저녁 팀 묶음 알림의 머리말 — 묶음 전체에 하나(v1.25.0, 종전의
-    일자별 머리말을 대체). 예: '📅 [송무1팀] 토·일·월 일정(260815~260817)'."""
+    """휴일 묶음 팀 알림의 머리말 — 묶음 전체에 하나(v1.25.0, 종전의 일자별
+    머리말을 대체). 예: '📅 [송무1팀] 토·일·월 일정(260815~260817)'.
+    공휴일이 이어지면 날짜 수만큼 늘어난다: '토·일·월·화 일정(260815~260818)'."""
     label = "·".join(WEEKDAYS[d.weekday()] for d in days)
     return f"📅 [{team}] {label} 일정({days[0].strftime('%y%m%d')}~{days[-1].strftime('%y%m%d')})"
 
@@ -866,15 +882,15 @@ def _weekend_day_block(events: list, day: date, cfg: Config) -> str:
 
 
 def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> str:
-    """금요일 저녁 토·일·월 묶음 팀 알림 — 변호사 기준으로 묶고 그 안에서
-    날짜를 나눈다(v1.25.0 — 종전의 '날짜별 메시지 이어붙이기'를 대체.
+    """휴일 묶음(토·일·월, 연휴면 그 이상) 팀 알림 — 변호사 기준으로 묶고 그
+    안에서 날짜를 나눈다(v1.25.0 — 종전의 '날짜별 메시지 이어붙이기'를 대체.
     같은 변호사가 날짜마다 반복 등장해 찾아가기 헷갈리던 문제 해소).
 
     · 변호사 섹션 순서는 평일 팀 알림과 동일(정변호사 → 수습).
-    · 3일 내내 일정 없는 변호사는 생략(종전 skip_empty 동작 유지).
+    · 묶음 기간 내내 일정 없는 변호사는 생략(종전 skip_empty 동작 유지).
     · 변호사 안에서도 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
     · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에 같은 방식으로.
-    · 팀 전체가 3일 내내 비면 본문은 '일정 없음' 한 줄."""
+    · 팀 전체가 기간 내내 비면 본문은 '일정 없음' 한 줄."""
     days = sorted(events_by_day)
     names = team_sections(team, cfg)
     buckets = {n: {d: [] for d in days} for n in names}

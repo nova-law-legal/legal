@@ -19,6 +19,7 @@ from transform import (  # noqa: E402
     build_section_message,
     build_team_message,
     build_team_weekend_message,
+    bundle_days_from,
     collect_warnings,
     evening_uncovered,
     event_in_team,
@@ -772,10 +773,32 @@ def test_result_non_attend_overrides_listed_attorney():
 
 
 def test_weekend_bundle_header():
-    # 금요일 저녁 묶음 머리말: 묶음 전체에 하나, 요일 나열 + 날짜 범위.
+    # 휴일 묶음 머리말: 묶음 전체에 하나, 요일 나열 + 날짜 범위.
     # (v1.25.0: 일자별 머리말 '📅 [팀] 토요일 일정(…)'을 대체)
     days = [date(2026, 6, 27), date(2026, 6, 28), date(2026, 6, 29)]
     assert format_header_weekend_bundle("송무1팀", days) == "📅 [송무1팀] 토·일·월 일정(260627~260629)"
+    # 공휴일로 늘어난 묶음(예: 월요일 대체공휴일)도 요일 나열이 따라 늘어난다.
+    days4 = [date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17), date(2026, 8, 18)]
+    assert format_header_weekend_bundle("송무2팀", days4) == "📅 [송무2팀] 토·일·월·화 일정(260815~260818)"
+
+
+def test_bundle_days_from():
+    # 휴일 묶음 대상일(v1.26.0) — 익일이 휴일이면 이어지는 휴일 전부 + 다음 영업일.
+    sat = date(2026, 8, 15)
+    # 평소 주말: 토·일·월.
+    assert bundle_days_from(sat, set()) == [sat, date(2026, 8, 16), date(2026, 8, 17)]
+    # 월요일이 대체공휴일이면 화요일까지: 토·일·월·화.
+    assert bundle_days_from(sat, {date(2026, 8, 17)}) == [
+        sat, date(2026, 8, 16), date(2026, 8, 17), date(2026, 8, 18)]
+    # 평일 하루 공휴일(수요일) 전날 저녁: 수·목.
+    wed = date(2026, 8, 19)
+    assert bundle_days_from(wed, {wed}) == [wed, date(2026, 8, 20)]
+    # 익일이 영업일이면 묶지 않는다(빈 리스트 → 평소대로 하루치).
+    assert bundle_days_from(date(2026, 8, 18), set()) == []
+    # 명절형 연휴: 목·금 공휴일 + 주말 → 다음 월요일까지 5일 묶음.
+    thu = date(2026, 9, 24)
+    assert bundle_days_from(thu, {thu, date(2026, 9, 25)}) == [
+        thu, date(2026, 9, 25), date(2026, 9, 26), date(2026, 9, 27), date(2026, 9, 28)]
 
 
 def test_build_message_head_override():

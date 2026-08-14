@@ -15,7 +15,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
@@ -156,3 +156,27 @@ def fetch_events(sources, day=None):
 def fetch_today_events(calendar_ids, day=None):
     """단일(기본) 계정용 편의 함수 — 로컬 미리보기 등에서 사용."""
     return fetch_events([(_creds_info(""), calendar_ids)], day)
+
+
+# 구글 공식 '대한민국의 휴일' 공개 캘린더 — 공휴일(대체·임시공휴일 포함) 조회용(v1.26.0).
+# 공개 캘린더라 별도 공유 설정 없이 어느 서비스계정으로든 읽을 수 있다.
+HOLIDAY_CALENDAR_ID = "ko.south_korea#holiday@group.v.calendar.google.com"
+
+
+def fetch_holidays(sources, start_day, end_day):
+    """[start_day, end_day] 구간의 공휴일 날짜 집합(set[date])을 반환.
+
+    휴일 캘린더에는 쉬는 날이 아닌 '기념일'(국군의날 등)도 들어 있어,
+    설명(description)이 '공휴일'로 시작하는 항목만 공휴일로 인정한다.
+    (실측: '광복절'/'쉬는 날 광복절'/'추석 연휴'=공휴일, '국군의날'=기념일)
+    조회 실패 시 예외를 그대로 올린다 — 호출 쪽(main.py)에서 주말 기준으로 폴백."""
+    service = _service(sources[0][0])
+    start = datetime(start_day.year, start_day.month, start_day.day, tzinfo=KST)
+    end = datetime(end_day.year, end_day.month, end_day.day, tzinfo=KST) + timedelta(days=1)
+    raw = _list_events_one(service, HOLIDAY_CALENDAR_ID, start, end)
+    return {
+        date.fromisoformat(ev["start"]["date"])
+        for ev in raw
+        if ev.get("start", {}).get("date")
+        and (ev.get("description") or "").startswith("공휴일")
+    }
