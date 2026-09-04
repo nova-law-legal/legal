@@ -981,16 +981,21 @@ def test_team_event_count_no_double_count():
     assert team_event_count([DEADLINE_EV], CFG, "송무2팀") == 0
 
 
-def test_team_message_skip_empty():
-    # 금요일 묶음 — 3일 내내 일정 없는 변호사 섹션은 생략한다.
-    # (v1.25.0: build_team_message 의 skip_empty 를 대체)
+def test_team_message_empty_lawyer_shown():
+    # 휴일 묶음 — 기간 내내 일정 없는 변호사도 이름은 보이고 본문은 '없음'.
+    # (v1.28.0: v1.25.0의 '생략(skip_empty)'을 대체 — 평일 팀 알림과 같은 원칙)
     sat, sun, mon = date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17)
     msg = build_team_weekend_message({sat: [], sun: [], mon: [DEADLINE_EV]}, CFG, "송무1팀")
-    assert "### ⚖️ 천기섭 변호사" in msg
-    assert "### ⚖️ 정진실 변호사" not in msg
-    # 팀 전체가 3일 내내 비면 본문은 '일정 없음' 한 줄.
+    assert "### ⚖️ 천기섭 변호사\n\n◆ 월요일(260817)" in msg
+    assert "### ⚖️ 정진실 변호사\n\n없음" in msg
+    # 변호사 순서는 평일 팀 알림과 동일 — 명단 전원이 등장한다.
+    for n in team_sections("송무1팀", CFG):
+        assert f"### ⚖️ {n} 변호사" in msg
+    # 팀 전체가 3일 내내 비어도 변호사 전원이 '없음'으로 보인다.
     empty = build_team_weekend_message({sat: [], sun: [], mon: []}, CFG, "송무2팀")
-    assert empty == "📅 [송무2팀] 토·일·월 일정(260815~260817)\n\n일정 없음"
+    assert empty.startswith("📅 [송무2팀] 토·일·월 일정(260815~260817)\n\n### ⚖️ ")
+    assert empty.count("\n\n없음") == len(team_sections("송무2팀", CFG))
+    assert "일정 없음" not in empty and "### 기타" not in empty
 
 
 def test_weekend_bundle_lawyer_block():

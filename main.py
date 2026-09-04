@@ -199,7 +199,7 @@ def main():
             if bundle and name in WEEKEND_BUNDLE_TARGETS:
                 # 묶음 대상은 팀 알림뿐(v1.24.0). 변호사 기준으로 묶고 그 안에서
                 # '◆ 토요일(…)' 날짜 소제목으로 나눈다(v1.25.0). 일정 없는
-                # 변호사·날·칸은 생략해 길이를 줄인다.
+                # 변호사는 평일처럼 이름 + '없음'(v1.28.0), 빈 날·칸은 생략.
                 total = sum(team_event_count(bundle_events[d], cfg, name) for d in bundle_days)
                 message = "@everyone\n" + build_team_weekend_message(bundle_events, cfg, name) + "\n​"
                 label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)

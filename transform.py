@@ -887,10 +887,12 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> s
     같은 변호사가 날짜마다 반복 등장해 찾아가기 헷갈리던 문제 해소).
 
     · 변호사 섹션 순서는 평일 팀 알림과 동일(정변호사 → 수습).
-    · 묶음 기간 내내 일정 없는 변호사는 생략(종전 skip_empty 동작 유지).
-    · 변호사 안에서도 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
-    · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에 같은 방식으로.
-    · 팀 전체가 기간 내내 비면 본문은 '일정 없음' 한 줄."""
+    · 묶음 기간 내내 일정 없는 변호사도 이름은 항상 보이고 본문은 '없음'
+      (v1.28.0 — 종전 '생략(skip_empty)'을 대체. 평일 팀 알림과 같은 원칙:
+      그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게).
+    · 변호사 안에서는 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
+    · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에(있을 때만).
+    · 팀에 변호사 명단이 없고 일정도 없으면 본문은 '일정 없음' 한 줄."""
     days = sorted(events_by_day)
     names = team_sections(team, cfg)
     buckets = {n: {d: [] for d in days} for n in names}
@@ -904,17 +906,15 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> s
             elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
                 others[d].append(ev)
 
-    def block(head, by_day):
+    def block(head, by_day, empty=None):
+        """변호사 한 명(또는 기타) 블록. 기간 내내 비면 empty 를 본문으로 쓰고,
+        empty 가 None 이면 블록 자체를 뺀다(기타 섹션용)."""
         day_blocks = [_weekend_day_block(by_day[d], d, cfg) for d in days if by_day[d]]
         if not day_blocks:
-            return None
+            return None if empty is None else head + "\n\n" + empty
         return head + "\n\n" + "\n\n".join(day_blocks)
 
-    blocks = []
-    for n in names:
-        b = block(format_lawyer_head(n, days[0]), buckets[n])
-        if b:
-            blocks.append(b)
+    blocks = [block(format_lawyer_head(n, days[0]), buckets[n], empty="없음") for n in names]
     other = block("### 기타", others)
     if other:
         blocks.append(other)
