@@ -44,19 +44,20 @@ CFG = Config(
     locations={},
     teams={
         "송무1팀": {
-            "변호사": ["천기섭", "박정윤", "박준호", "김정아", "이종원"],
-            "수습": ["신이나", "정희소", "이하영", "정진실"],
+            "변호사": ["천기섭", "박정윤", "박준호", "이종원"],
+            "수습": ["신이나", "정희소", "이하영", "정진실", "한충호"],
         },
         "송무2팀": {
-            "변호사": ["김태환", "채원협", "김수인"],
-            "수습": ["임현진", "김윤수", "박건우", "한충호"],
+            "변호사": ["김태환", "채원협", "김수인", "김정아", "박성하"],
+            "수습": ["임현진", "김윤수", "박건우"],
         },
         "상담지원팀": {"변호사": ["이돈호"], "태그": True},
     },
     staff={
         "천기섭": {"주담당": "임지혜", "부담당": "최수빈"},
-        "김정아": {"주담당": "우서영", "부담당": "진정은"},
         "박준호": {"주담당": "우서영", "부담당": "진정은"},
+        "한충호": {"주담당": "우서영"},                  # 부담당 미정(임시 배정)
+        "김정아": {"주담당": "김영은", "부담당": "박민웅"},
         "김태환": {"주담당": "민은선", "부담당": "김영은"},
         "이돈호": {"담당직원": ["조준혁", "윤태린"]},
     },
@@ -605,7 +606,7 @@ def test_songmu_tag_ignored():
 
 def test_team_by_responsible_multi_team():
     # 서로 다른 팀 변호사가 함께 담당 -> 양쪽 팀 모두 포함
-    ev = {"description": "사건번호: 1\n담당변호사: 김정아,김태환\n내용: 변론기일"}
+    ev = {"description": "사건번호: 1\n담당변호사: 천기섭,김태환\n내용: 변론기일"}
     assert event_in_team(ev, "송무1팀", CFG.teams) is True
     assert event_in_team(ev, "송무2팀", CFG.teams) is True
 
@@ -669,10 +670,12 @@ def test_damdang_paren_fallback():
 
 def test_leave_follow_by_name():
     # 휴무 일정은 담당변호사 필드가 없으므로 제목의 이름으로 팀 판정(정+수습)
-    assert event_in_team({"summary": "김정아 연차"}, "송무1팀", CFG.teams) is True
-    assert event_in_team({"summary": "김정아 연차"}, "송무2팀", CFG.teams) is False
+    # (2026-09-04 인사이동: 김정아 → 송무2팀, 한충호(수습) → 송무1팀)
+    assert event_in_team({"summary": "김정아 연차"}, "송무2팀", CFG.teams) is True
+    assert event_in_team({"summary": "김정아 연차"}, "송무1팀", CFG.teams) is False
     assert event_in_team({"summary": "정진실 오전반차"}, "송무1팀", CFG.teams) is True   # 수습 포함
-    assert event_in_team({"summary": "한충호 휴가"}, "송무2팀", CFG.teams) is True
+    assert event_in_team({"summary": "한충호 휴가"}, "송무1팀", CFG.teams) is True
+    assert event_in_team({"summary": "한충호 휴가"}, "송무2팀", CFG.teams) is False
     assert event_in_team({"summary": "손진영 오후반반차"}, "송무1팀", CFG.teams) is False
 
 
@@ -845,8 +848,8 @@ def test_morning_section_mention_only_on_one():
 def test_team_sections_seniors_then_trainees():
     # 팀 섹션 순서는 정변호사 → 수습변호사. (대표변호사는 팀 알림에 끼지 않는다)
     assert team_sections("송무1팀", CFG) == [
-        "천기섭", "박정윤", "박준호", "김정아", "이종원",
-        "신이나", "정희소", "이하영", "정진실",
+        "천기섭", "박정윤", "박준호", "이종원",
+        "신이나", "정희소", "이하영", "정진실", "한충호",
     ]
     assert "이돈호" not in team_sections("송무1팀", CFG)
 
@@ -867,8 +870,11 @@ def test_team_message_splits_by_lawyer():
         "📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n"
         "### ⚖️ 천기섭 변호사 내일 일정(260810, 월)\n\n"
     )
-    # 공동담당(김정아·박준호)은 양쪽 변호사 섹션에 모두 실린다.
-    assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 2
+    # 공동담당(박준호=1팀·김정아=2팀)은 각자 소속 팀 알림의 본인 섹션에 실린다.
+    assert msg.count("10:00 [조장연] 변론기일 > 김정아") == 1
+    msg2 = build_team_message([DEADLINE_EV, GIJIL_EV], DAY, CFG, "송무2팀",
+                              lead="[송무2팀] 내일 일정", day_label="내일 일정")
+    assert "### ⚖️ 김정아 변호사 내일 일정(260810, 월)\n\n[기한]\n없음\n\n[일정]\n10:00 [조장연] 변론기일 > 김정아" in msg2
     # 일정이 없는 변호사도 세 칸을 '없음'으로 보여준다. (섹션 제목 아래 빈 줄 하나)
     assert "### ⚖️ 정진실 변호사 내일 일정(260810, 월)\n\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음" in msg
     # 담당변호사 섹션 안에서는 [기한]/[일정]/[휴무] 순서를 지킨다.
@@ -917,7 +923,7 @@ def test_lawyer_mention_formats():
 def test_staff_leave_goes_to_their_lawyers():
     # 직원 휴무는 staff.yaml 담당 변호사들의 [휴무] 칸에 함께 실린다.
     names = team_sections("송무1팀", CFG)
-    assert lawyer_owners(STAFF_LEAVE_EV, names, CFG) == {"박준호", "김정아"}
+    assert lawyer_owners(STAFF_LEAVE_EV, names, CFG) == {"박준호", "한충호"}   # 우서영 = 박준호·한충호 담당
     # 변호사 본인의 휴무는 본인 섹션으로.
     own = {"summary": "천기섭 특별휴가(오후반차)", "start": {"date": "2026-08-10"},
            "description": "담당(변호사): 천기섭"}
@@ -969,9 +975,10 @@ def test_html_entities_unescaped():
 
 
 def test_team_event_count_no_double_count():
-    # 공동담당으로 두 섹션에 실려도 건수는 1건.
+    # 공동담당으로 두 섹션에 실려도 팀별 건수는 1건. (박준호=1팀, 김정아=2팀 → 각 팀 1건)
     assert team_event_count([GIJIL_EV], CFG, "송무1팀") == 1
-    assert team_event_count([GIJIL_EV], CFG, "송무2팀") == 0
+    assert team_event_count([GIJIL_EV], CFG, "송무2팀") == 1
+    assert team_event_count([DEADLINE_EV], CFG, "송무2팀") == 0
 
 
 def test_team_message_skip_empty():
@@ -1017,8 +1024,8 @@ def test_morning_team_message_combined():
     )
     assert "10:00 [조장연] 변론기일 > 김정아" in msg
     assert "###" not in msg  # 오전 팀 알림은 변호사별 소제목 없이 한 덩어리
-    # 다른 팀 일정은 걸러진다.
-    assert team_events([DEADLINE_EV, GIJIL_EV], CFG, "송무2팀") == []
+    # 다른 팀 일정은 걸러진다 — 2팀에는 천기섭 기한이 빠지고 김정아(2팀) 공동담당 기일만 남는다.
+    assert team_events([DEADLINE_EV, GIJIL_EV], CFG, "송무2팀") == [GIJIL_EV]
 
 
 def test_office_meeting_message():
@@ -1199,7 +1206,9 @@ def test_real_config_rosters_and_staff():
         for name in team_sections(team, cfg):
             assert cfg.staff.get(name), f"{team}의 {name} 담당직원이 staff.yaml 에 없습니다"
     assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
-    assert cfg.staff["김수인"] == ["김영은", "김유빈"]
+    assert cfg.staff["김수인"] == ["김영은", "박민웅"]
+    assert cfg.staff["한충호"] == ["우서영"]          # 부담당 미정(임시 배정)
+    assert "강재철" not in cfg.staff["이돈호"]       # 송무2팀으로 이동
     assert "조준혁" in cfg.staff["이돈호"]
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
     for team in ("송무1팀", "송무2팀"):
