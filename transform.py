@@ -68,6 +68,9 @@ STAFF_ERRAND_KW = ("수령", "복사", "등사")
 # 휴가·반차·연차 등 부재(휴무) 일정 → 맨 아래 [휴무] 섹션에 따로 모은다.
 # ('반차'가 '반반차'·'오전반차'·'오후반차'를 모두 포함하므로 별도 추가 불필요)
 LEAVE_KEYWORDS = ("휴가", "반차", "휴무", "연차")
+# staff.yaml 에서 담당직원 대신 이 값을 적으면, 그 변호사의 [휴무] 칸에 이름을 가리지
+# 않고 '전 구성원의 휴무'를 전부 싣는다 (대표변호사 개인 알림용, v1.30.0).
+LEAVE_ALL = "전체"
 
 # 상담/미팅 의뢰인 전화번호, 접견 기관(구치소·교도소) 추출용 패턴
 PHONE_RE = re.compile(r"\d{2,4}-\d{3,4}-\d{4}")
@@ -402,7 +405,7 @@ def event_in_team_by_staff(event: dict, team: str, cfg) -> bool:
         | set(_attendee_names(fields.get("담당(변호사)")) or [])
     if involved & _songmu_roster(cfg.teams):
         return False  # 송무팀 변호사가 담당·출석이면 변호사 기준 매핑에 맡긴다
-    team_staff = {s for n in team_sections(team, cfg) for s in cfg.staff.get(n, [])}
+    team_staff = {s for n in team_sections(team, cfg) for s in cfg.staff.get(n, [])} - {LEAVE_ALL}
     return bool(set(_staff_names(fields)) & team_staff)
 
 
@@ -770,13 +773,16 @@ def lawyer_owners(event: dict, names: list, cfg: Config) -> set:
 
     · 휴무: 제목에 이름이 있는 변호사 본인 + 그 이름이 staff.yaml 담당직원인 변호사.
       (한 직원이 여러 변호사의 담당이면 그 변호사들 섹션에 모두 실린다)
+      staff.yaml 값이 '전체'(LEAVE_ALL)인 변호사는 모든 휴무를 싣는다 — 대표변호사
+      개인 알림에 전 구성원(운영팀·상담지원팀 등 명단 밖 직원 포함)의 휴무를 모으기 위함.
     · 그 외: 담당변호사 + 출석변호사(다른 팀 사건의 교차출석도 자기 섹션에 실림).
       공동담당이면 담당 변호사 섹션 모두에 실린다."""
     if is_leave(event):
         title = event.get("summary") or ""
         return {
             n for n in names
-            if n in title or any(s in title for s in cfg.staff.get(n, []))
+            if n in title or LEAVE_ALL in cfg.staff.get(n, [])
+            or any(s in title for s in cfg.staff.get(n, []))
         }
     fields = parse_description(event.get("description", ""))
     who = set(_responsible_names(fields))

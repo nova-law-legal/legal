@@ -936,6 +936,29 @@ def test_staff_leave_goes_to_their_lawyers():
     assert lawyer_owners(chair, ["이돈호"], CFG) == {"이돈호"}
 
 
+def test_lawyer_owners_leave_all():
+    # (v1.30.0) staff.yaml 값이 '전체'인 변호사(대표)는 명단 밖 직원의 휴무도 전부 싣는다.
+    # 운영팀 직원 휴무 — Lawware 가 담당(변호사)에 이돈호를 달아 주지만 그 필드는 보지 않는다.
+    cfg = load_config(CONFIG_DIR)
+    ops = {"summary": "손진영 연차",
+           "description": "담당(변호사): 이돈호\n담당(직원): 손진영,유은빈,김민건,#휴가"}
+    assert lawyer_owners(ops, ["이돈호"], cfg) == {"이돈호"}
+    assert lawyer_events([ops], cfg, "이돈호") == [ops]
+    # 송무팀 직원·변호사 휴무도 대표 알림에 실린다(겸직자 포함)
+    for title in ("최수빈 연차", "진정은 오전반차", "김정아 오후반반차", "박준호 휴가", "금가윤 연차"):
+        assert lawyer_owners({"summary": title}, ["이돈호"], cfg) == {"이돈호"}
+    # 휴무가 아닌 일정은 종전대로 담당·출석 기준 — '전체'가 새지 않는다
+    other = {"summary": "[박설] 검토 회의", "description": "담당(변호사): 천기섭"}
+    assert lawyer_owners(other, ["이돈호"], cfg) == set()
+    # 송무팀 알림에는 여전히 안 실린다(운영팀 직원은 팀 명단 밖)
+    for team in ("송무1팀", "송무2팀"):
+        assert event_in_team(ops, team, cfg.teams) is False
+        assert event_in_team_by_staff(ops, team, cfg) is False
+    # '전체' 표식이 담당직원 소속팀 폴백(event_in_team_by_staff)의 직원 이름으로 새지 않는다
+    errand = {"summary": "전체 기록 수령", "description": "담당(변호사): 이돈호\n담당(직원): 전체"}
+    assert event_in_team_by_staff(errand, "상담지원팀", cfg) is False
+
+
 def test_team_message_other_bucket():
     # 어느 변호사에도 배정 안 되지만 팀 알림 대상인 일정은 맨 아래 '### 기타'로.
     tagged = {"summary": "상담지원팀 회의", "start": {"dateTime": "2026-08-10T09:00:00+09:00"},
@@ -1216,8 +1239,7 @@ def test_real_config_rosters_and_staff():
     assert cfg.staff["한충호"] == ["우서영"]          # 부담당 미정(임시 배정)
     assert cfg.staff["황인철"] == ["우서영", "임지혜"]   # 2026-09-21 입사(1팀)
     assert "황인철" in cfg.teams["송무1팀"]["변호사"]
-    assert "강재철" not in cfg.staff["이돈호"]       # 송무2팀으로 이동
-    assert "조준혁" in cfg.staff["이돈호"]
+    assert cfg.staff["이돈호"] == ["전체"]          # 대표 알림 [휴무]는 전 구성원(v1.30.0)
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
     for team in ("송무1팀", "송무2팀"):
         for name in team_sections(team, cfg):
