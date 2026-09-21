@@ -44,7 +44,7 @@ CFG = Config(
     locations={},
     teams={
         "송무1팀": {
-            "변호사": ["천기섭", "박정윤", "박준호", "이종원"],
+            "변호사": ["천기섭", "박정윤", "박준호", "이종원", "황인철"],
             "수습": ["신이나", "정희소", "이하영", "정진실", "한충호"],
         },
         "송무2팀": {
@@ -57,6 +57,7 @@ CFG = Config(
         "천기섭": {"주담당": "임지혜", "부담당": "최수빈"},
         "박준호": {"주담당": "우서영", "부담당": "진정은"},
         "한충호": {"주담당": "우서영"},                  # 부담당 미정(임시 배정)
+        "황인철": {"주담당": "우서영", "부담당": "임지혜"},   # 2026-09-21 입사
         "김정아": {"주담당": "김영은", "부담당": "박민웅"},
         "김태환": {"주담당": "민은선", "부담당": "김영은"},
         "이돈호": {"담당직원": ["조준혁", "윤태린"]},
@@ -848,7 +849,7 @@ def test_morning_section_mention_only_on_one():
 def test_team_sections_seniors_then_trainees():
     # 팀 섹션 순서는 정변호사 → 수습변호사. (대표변호사는 팀 알림에 끼지 않는다)
     assert team_sections("송무1팀", CFG) == [
-        "천기섭", "박정윤", "박준호", "이종원",
+        "천기섭", "박정윤", "박준호", "이종원", "황인철",
         "신이나", "정희소", "이하영", "정진실", "한충호",
     ]
     assert "이돈호" not in team_sections("송무1팀", CFG)
@@ -923,7 +924,7 @@ def test_lawyer_mention_formats():
 def test_staff_leave_goes_to_their_lawyers():
     # 직원 휴무는 staff.yaml 담당 변호사들의 [휴무] 칸에 함께 실린다.
     names = team_sections("송무1팀", CFG)
-    assert lawyer_owners(STAFF_LEAVE_EV, names, CFG) == {"박준호", "한충호"}   # 우서영 = 박준호·한충호 담당
+    assert lawyer_owners(STAFF_LEAVE_EV, names, CFG) == {"박준호", "한충호", "황인철"}   # 우서영 = 박준호·한충호·황인철 담당
     # 변호사 본인의 휴무는 본인 섹션으로.
     own = {"summary": "천기섭 특별휴가(오후반차)", "start": {"date": "2026-08-10"},
            "description": "담당(변호사): 천기섭"}
@@ -1213,6 +1214,8 @@ def test_real_config_rosters_and_staff():
     assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
     assert cfg.staff["김수인"] == ["김영은", "박민웅"]
     assert cfg.staff["한충호"] == ["우서영"]          # 부담당 미정(임시 배정)
+    assert cfg.staff["황인철"] == ["우서영", "임지혜"]   # 2026-09-21 입사(1팀)
+    assert "황인철" in cfg.teams["송무1팀"]["변호사"]
     assert "강재철" not in cfg.staff["이돈호"]       # 송무2팀으로 이동
     assert "조준혁" in cfg.staff["이돈호"]
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
