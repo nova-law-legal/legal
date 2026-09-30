@@ -1236,8 +1236,20 @@ def test_real_config_rosters_and_staff():
             assert cfg.staff.get(name), f"{team}의 {name} 담당직원이 staff.yaml 에 없습니다"
     assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
     assert cfg.staff["김수인"] == ["김영은", "박민웅"]
-    assert cfg.staff["한충호"] == ["우서영"]          # 부담당 미정(임시 배정)
     assert cfg.staff["황인철"] == ["우서영", "임지혜"]   # 2026-09-21 입사(1팀)
+    # 2026-10-01 배치표 — 최수아(송무1·2팀 겸임) 김태환·정희소·정진실 부담당.
+    assert cfg.staff["김태환"] == ["민은선", "최수아"]
+    assert cfg.staff["정희소"] == ["임지혜", "최수아"]
+    assert cfg.staff["정진실"] == ["최수빈", "최수아"]
+    assert cfg.staff["한충호"] == ["우서영", "진정은"]
+    leave = {"summary": "최수아 연차", "start": {"date": "2026-10-02"},
+             "description": "담당(직원): 최수아,#휴가"}
+    assert lawyer_owners(leave, team_sections("송무1팀", cfg), cfg) == {"정희소", "정진실"}
+    assert lawyer_owners(leave, team_sections("송무2팀", cfg), cfg) == {"김태환"}
+    # '최수아'·'최수빈' 이름이 서로 오매칭되지 않는지.
+    sb = {"summary": "최수빈 연차", "start": {"date": "2026-10-02"}, "description": ""}
+    assert lawyer_owners(sb, team_sections("송무1팀", cfg), cfg) == {"천기섭", "박정윤", "이종원", "정진실"}
+    assert lawyer_owners(sb, team_sections("송무2팀", cfg), cfg) == set()
     assert "황인철" in cfg.teams["송무1팀"]["변호사"]
     assert cfg.staff["이돈호"] == ["전체"]          # 대표 알림 [휴무]는 전 구성원(v1.30.0)
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
