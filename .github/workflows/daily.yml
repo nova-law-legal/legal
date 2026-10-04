@@ -8,7 +8,13 @@ on:
   # 중복 발송이 우려되면 주석 처리한다. (현재: 외부 트리거 단독 운영을 위해 비활성화)
   # schedule:
   #   - cron: "0 22 * * *"   # UTC 22:00 == KST 07:00 (한국은 서머타임 없음)
-  workflow_dispatch: {}   # 외부 스케줄러 + 수동 실행 버튼
+  workflow_dispatch:      # 외부 스케줄러 + 수동 실행 버튼
+    inputs:
+      dry_run:
+        description: "미리보기만(디스코드 전송 안 함) — 실제 시크릿으로 오늘 발송될 내용을 로그에 출력. (외부 스케줄러는 미지정 → 평소대로 발송)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -39,7 +45,14 @@ jobs:
           # 미설정 시 그 팀의 오전 알림은 건너뛴다(기본 채널 전체 알림과 중복 방지).
           DISCORD_WEBHOOK_URL_SONGMU1: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU1 }}
           DISCORD_WEBHOOK_URL_SONGMU2: ${{ secrets.DISCORD_WEBHOOK_URL_SONGMU2 }}
-        run: python main.py
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            # 미리보기: 웹훅을 비워 이중으로 전송을 막는다
+            unset DISCORD_WEBHOOK_URL DISCORD_WEBHOOK_URL_SONGMU1 DISCORD_WEBHOOK_URL_SONGMU2
+            python main.py --dry-run
+          else
+            python main.py
+          fi
 
       # 자동 점검 경고 보고 — 이슈(이력용) + 관리자 메일(통지용, Gmail SMTP).
       # 메일은 GMAIL_APP_PASSWORD 시크릿이 등록된 경우에만 발송된다.
