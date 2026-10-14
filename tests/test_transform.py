@@ -1269,6 +1269,103 @@ def test_real_config_rosters_and_staff():
         assert cfg.mentions[name]["계정명"] == f"{name} 변호사"
 
 
+# --------------------------------------------------------------------------- #
+# v1.32.0 — 오후 팀 알림: 오후제외(섹션 빼기)·오후나눔(여러 통으로 나누기)
+# --------------------------------------------------------------------------- #
+SPLIT_CFG = Config(
+    locations={},
+    teams={
+        "송무1팀": {**CFG.teams["송무1팀"], "오후제외": ["정희소", "정진실"]},
+        "송무2팀": {**CFG.teams["송무2팀"], "오후나눔": [
+            ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]},
+        "상담지원팀": CFG.teams["상담지원팀"],
+    },
+    staff={"정진실": {"주담당": "최수빈"}, "김태환": {"주담당": "민은선"}},
+)
+# 2팀 정변호사 + 1팀 수습 공동담당(실데이터 10/15 [조승범] 선고기일 꼴).
+CO_EV = {
+    "summary": "조승범 [선고기일]", "start": {"dateTime": "2026-08-10T14:00:00+09:00"},
+    "description": "사건번호: 3\n의뢰인: 조승범(조승범)\n담당변호사: 김태환,정희소\n"
+                   "출석변호사: ▲김태환\n내용: 선고기일",
+}
+SUIN_EV = {
+    "summary": "정연호 [변론기일]", "start": {"dateTime": "2026-08-10T10:20:00+09:00"},
+    "description": "사건번호: 4\n의뢰인: 정연호(정연호)\n담당변호사: 김수인\n"
+                   "출석변호사: ▲김수인\n내용: 변론기일",
+}
+
+
+def test_evening_section_groups():
+    from transform import evening_section_groups
+    assert evening_section_groups("송무1팀", SPLIT_CFG) == [
+        ["천기섭", "박정윤", "황인철", "박준호", "이종원", "신이나", "이하영", "한충호"]]
+    assert evening_section_groups("송무2팀", SPLIT_CFG) == [
+        ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
+    # 설정이 없으면 종전대로 명단 전원 한 통.
+    assert evening_section_groups("송무1팀", CFG) == [team_sections("송무1팀", CFG)]
+    # 어느 묶음에도 없는 사람(신규 입사)은 빠지지 않고 마지막 통에(명단 순서대로).
+    new = Config(locations={}, teams={"송무2팀": {
+        "변호사": ["김태환", "신입", "김수인"], "수습": [],
+        "오후나눔": [["김태환"], ["김수인"]]}})
+    assert evening_section_groups("송무2팀", new) == [["김태환"], ["신입", "김수인"]]
+
+
+def test_evening_exclude_drops_section_not_to_others():
+    msg = build_team_message([CO_EV, SUIN_EV], DAY, SPLIT_CFG, "송무1팀",
+                             lead="[송무1팀] 내일 일정", day_label="내일 일정", mention=True)
+    assert "정희소 변호사" not in msg and "정진실 변호사" not in msg
+    assert "이하영 변호사" in msg and "한충호 변호사" in msg
+    # 정희소 공동담당 일정은 1팀에서 빠진다('기타'로 옮겨 가지 않음) — 2팀 김태환 섹션에 실림.
+    assert "조승범" not in msg and "### 기타" not in msg
+    # 오전 팀 알림(team_events)의 팀 분류는 그대로 — 명단에서 빠진 게 아니다.
+    assert CO_EV in team_events([CO_EV], SPLIT_CFG, "송무1팀")
+    # 오후제외 변호사 휴무(제목에 본인 이름)도 섹션이 없으니 오후 1팀 알림에서 빠진다.
+    leave = {"summary": "정진실 반반차", "start": {"date": "2026-08-10"}, "description": ""}
+    assert "정진실 반반차" not in build_team_message([leave], DAY, SPLIT_CFG, "송무1팀")
+    # 단독 담당 일정은 오후 어디에도 안 실리므로 미배정 경고로 잡힌다(실데이터상 없음).
+    solo = {"summary": "단독 [변론기일]", "start": {"dateTime": "2026-08-10T11:00:00+09:00"},
+            "description": "사건번호: 5\n의뢰인: 단독(단독)\n담당변호사: 정희소\n내용: 변론기일"}
+    assert evening_uncovered([solo, CO_EV], SPLIT_CFG) == [solo]
+
+
+def test_evening_split_messages():
+    from transform import team_message_events
+    groups = [["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
+    first = build_team_message([CO_EV, SUIN_EV], DAY, SPLIT_CFG, "송무2팀",
+                               head="📅 [송무2팀] 내일 일정(260810, 월) (1/2)", day_label="내일 일정",
+                               mention=True, names=groups[0], others=False)
+    second = build_team_message([CO_EV, SUIN_EV], DAY, SPLIT_CFG, "송무2팀",
+                                head="📅 [송무2팀] 내일 일정(260810, 월) (2/2)", day_label="내일 일정",
+                                mention=False, names=groups[1], others=True)
+    assert first.startswith("📅 [송무2팀] 내일 일정(260810, 월) (1/2)\n@everyone\n\n### ⚖️ 김태환 변호사")
+    assert second.startswith("📅 [송무2팀] 내일 일정(260810, 월) (2/2)\n\n### ⚖️ 김수인 변호사")
+    assert "조승범" in first and "조승범" not in second
+    # 다른 통 변호사 몫 일정이 '기타'로 새지 않는다.
+    assert "정연호" in second and "정연호" not in first and "### 기타" not in second
+    assert "김수인 변호사" not in first and "김태환 변호사" not in second
+    assert team_message_events([CO_EV, SUIN_EV], SPLIT_CFG, "송무2팀", groups[0], False) == [CO_EV]
+    assert team_message_events([CO_EV, SUIN_EV], SPLIT_CFG, "송무2팀", groups[1], True) == [SUIN_EV]
+    # 휴일 묶음도 같은 묶음으로 나뉘고, 머리말 끝에 나눔 표시.
+    sat, sun, mon = date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17)
+    wk = build_team_weekend_message({sat: [], sun: [], mon: [CO_EV]}, SPLIT_CFG, "송무2팀",
+                                    names=groups[0], others=False, part=" (1/2)")
+    assert wk.startswith("📅 [송무2팀] 토·일·월 일정(260815~260817) (1/2)\n\n### ⚖️ 김태환 변호사")
+    assert "김수인 변호사" not in wk
+
+
+def test_real_config_evening_groups():
+    # 실제 teams.yaml — 2026-10-15부터 1팀 정희소·정진실 오후 섹션 제외, 2팀 2통.
+    # (인사이동으로 명단이 바뀌면 이 기대값도 함께 확인할 것)
+    from transform import evening_section_groups
+    cfg = load_config(CONFIG_DIR)
+    assert evening_section_groups("송무1팀", cfg) == [
+        ["천기섭", "박정윤", "황인철", "박준호", "이종원", "신이나", "이하영", "한충호"]]
+    assert evening_section_groups("송무2팀", cfg) == [
+        ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
+    # 오전 팀 분류용 명단은 그대로(정희소·정진실 포함).
+    assert "정희소" in team_sections("송무1팀", cfg) and "정진실" in team_sections("송무1팀", cfg)
+
+
 if __name__ == "__main__":
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -41,12 +41,15 @@ from transform import (
     build_team_weekend_message,
     bundle_days_from,
     collect_warnings,
+    evening_section_groups,
     evening_uncovered,
+    format_header_lead,
     lawyer_events,
     load_config,
     office_meeting_events,
     team_event_count,
     team_events,
+    team_message_events,
 )
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
@@ -196,41 +199,57 @@ def main():
         for kind, name, env_key in EVENING_TARGETS:
             if args.only and name != args.only:
                 continue
-            if bundle and name in WEEKEND_BUNDLE_TARGETS:
-                # 묶음 대상은 팀 알림뿐(v1.24.0). 변호사 기준으로 묶고 그 안에서
-                # '◆ 토요일(…)' 날짜 소제목으로 나눈다(v1.25.0). 일정 없는
-                # 변호사는 평일처럼 이름 + '없음'(v1.28.0), 빈 날·칸은 생략.
-                total = sum(team_event_count(bundle_events[d], cfg, name) for d in bundle_days)
-                message = "@everyone\n" + build_team_weekend_message(bundle_events, cfg, name) + "\n​"
-                label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)
-                count_desc = f"{label} {total}건"
+            # (메시지 표시명, 메시지, 건수) — 팀 알림은 teams.yaml '오후나눔'이면 여러 통
+            # (v1.32.0). 나눔 시 머리말 끝에 '(1/2)', @everyone 은 첫 통에만,
+            # '### 기타'는 마지막 통에만 싣는다.
+            outgoing = []
+            if kind == "팀":
+                groups = evening_section_groups(name, cfg)
+                for i, names in enumerate(groups):
+                    first, last = i == 0, i == len(groups) - 1
+                    part = f" ({i + 1}/{len(groups)})" if len(groups) > 1 else ""
+                    if bundle and name in WEEKEND_BUNDLE_TARGETS:
+                        # 묶음 대상은 팀 알림뿐(v1.24.0). 변호사 기준으로 묶고 그 안에서
+                        # '◆ 토요일(…)' 날짜 소제목으로 나눈다(v1.25.0). 일정 없는
+                        # 변호사는 평일처럼 이름 + '없음'(v1.28.0), 빈 날·칸은 생략.
+                        total = sum(len(team_message_events(bundle_events[d], cfg, name, names, last))
+                                    for d in bundle_days)
+                        message = ("@everyone\n" if first else "") + build_team_weekend_message(
+                            bundle_events, cfg, name, names=names, others=last, part=part)
+                        label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)
+                        count_desc = f"{label} {total}건"
+                    else:
+                        lead = f"[{name}]" + (f" {day_label}" if day_label else "")
+                        message = build_team_message(
+                            events, day, cfg, name, head=format_header_lead(lead, day) + part,
+                            day_label=day_label, mention=first, names=names, others=last,
+                        )
+                        count_desc = f"{len(team_message_events(events, cfg, name, names, last))}건"
+                    outgoing.append((name + part, message, count_desc))
             elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만, [기한] 제외)
                 message = build_lawyer_message(
                     events, day, cfg, name, day_label=day_label, mention=True,
                     include_deadlines=False,
-                ) + "\n​"
-                count_desc = f"{len(lawyer_events(events, cfg, name))}건"
+                )
+                outgoing.append((name, message, f"{len(lawyer_events(events, cfg, name))}건"))
             elif kind == "상담":  # 사무실 상담 알림(1006호·404호·인천)
                 message = build_office_meeting_message(
                     events, day, cfg, day_label=day_label, mention=True,
-                ) + "\n​"
-                count_desc = f"{len(office_meeting_events(events, cfg))}건"
-            else:
-                lead = f"[{name}]" + (f" {day_label}" if day_label else "")
-                message = build_team_message(
-                    events, day, cfg, name, lead=lead, day_label=day_label, mention=True,
-                ) + "\n​"
-                count_desc = f"{team_event_count(events, cfg, name)}건"
-            # 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
-            # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
-            if args.dry_run:
-                print(message)
-                continue
-            webhook = (os.environ.get(env_key) if env_key else None) or default_webhook
-            if not webhook:
-                sys.exit(f"{name} 웹훅 미설정 (DISCORD_WEBHOOK_URL{('/' + env_key) if env_key else ''})")
-            send(webhook, message)
-            print(f"[{name}] 전송 완료 ({day}, {count_desc})")
+                )
+                outgoing.append((name, message, f"{len(office_meeting_events(events, cfg))}건"))
+
+            for label_name, message, count_desc in outgoing:
+                # 메시지 끝에 빈 줄 하나(구분용). Discord가 일반 공백은 잘라내므로
+                # 보이지 않는 zero-width space 로 빈 줄을 강제한다.
+                message += "\n​"
+                if args.dry_run:
+                    print(message)
+                    continue
+                webhook = (os.environ.get(env_key) if env_key else None) or default_webhook
+                if not webhook:
+                    sys.exit(f"{name} 웹훅 미설정 (DISCORD_WEBHOOK_URL{('/' + env_key) if env_key else ''})")
+                send(webhook, message)
+                print(f"[{label_name}] 전송 완료 ({day}, {count_desc})")
 
         # 자동 점검 — 표기·분류가 애매한 일정을 찾아 경고(있으면 이슈 생성용 파일 기록).
         # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.

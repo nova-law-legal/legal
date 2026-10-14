@@ -87,14 +87,17 @@ def _normalize(s: str) -> str:
 
 
 def _normalize_team(v):
-    """teams.yaml 팀 항목 정규화 → {'변호사': [...], '수습': [...], '태그': bool}.
+    """teams.yaml 팀 항목 정규화 → {'변호사': [...], '수습': [...], '태그': bool,
+    '오후제외': [...], '오후나눔': [[...], ...]}.
     구형(list) 값은 {'변호사': v, '수습': [], '태그': True} 로 해석(하위호환)."""
     if isinstance(v, list):
-        return {"변호사": v, "수습": [], "태그": True}
+        return {"변호사": v, "수습": [], "태그": True, "오후제외": [], "오후나눔": []}
     return {
         "변호사": (v or {}).get("변호사") or [],
         "수습": (v or {}).get("수습") or [],
         "태그": bool((v or {}).get("태그")),
+        "오후제외": (v or {}).get("오후제외") or [],
+        "오후나눔": [list(g or []) for g in ((v or {}).get("오후나눔") or [])],
     }
 
 
@@ -747,6 +750,26 @@ def team_sections(team: str, cfg: Config) -> list:
     return list(tc.get("변호사") or []) + list(tc.get("수습") or [])
 
 
+def evening_section_groups(team: str, cfg: Config) -> list:
+    """오후(익일) 팀 알림의 메시지별 변호사 섹션 묶음(v1.32.0).
+
+    · '오후제외' 변호사는 섹션을 싣지 않는다. 그 변호사 몫으로만 잡히던 일정은
+      '### 기타'로 옮기지 않고 뺀다(수습이라 정변호사와 공동담당 — 그 변호사
+      섹션에 이미 실린다).
+    · '오후나눔'이 있으면 묶음마다 메시지를 따로 보낸다. 묶음 안 순서는 명단
+      (변호사→수습) 순서를 따르고, 어느 묶음에도 없는 사람(신규 입사 등)은
+      빠지지 않게 마지막 묶음에 넣는다.
+    · 둘 다 없으면 [명단 전원] 한 묶음(종전과 동일)."""
+    tc = cfg.teams.get(team) or {}
+    excluded = set(tc.get("오후제외") or [])
+    names = [n for n in team_sections(team, cfg) if n not in excluded]
+    split = [set(g) for g in (tc.get("오후나눔") or []) if g]
+    if not split:
+        return [names]
+    split[-1] |= {n for n in names if not any(n in g for g in split)}
+    return [g for g in ([n for n in names if n in s] for s in split) if g]
+
+
 def lawyer_mention(name: str, cfg: Config) -> str:
     """변호사 한 명의 디스코드 멘션 문자열(mentions.yaml 기준).
     · id 가 채워져 있으면 '<@ID>' — 실제 알림(핑)이 가는 진짜 멘션.
@@ -807,6 +830,44 @@ def team_event_count(events: list, cfg: Config, team: str) -> int:
     return len(team_events(events, cfg, team))
 
 
+def _evening_names(team: str, cfg: Config) -> list:
+    """오후 팀 알림 전체(모든 묶음)에 섹션이 실리는 변호사 — 명단 순서."""
+    return [n for g in evening_section_groups(team, cfg) for n in g]
+
+
+def _team_buckets(events: list, cfg: Config, team: str, names: list):
+    """names 변호사 섹션별 일정 + '기타' 일정. 섹션 주인은 팀 명단 전원 기준으로
+    판정한다 — 다른 메시지 묶음이나 '오후제외' 변호사 몫 일정이 '기타'로 새지 않게.
+    (주인이 아무도 없고 팀 판정만 되는 일정이 '기타')"""
+    full = team_sections(team, cfg)
+    buckets = {n: [] for n in names}
+    others = []
+    for ev in events:
+        owners = lawyer_owners(ev, full, cfg)
+        if owners:
+            for n in names:
+                if n in owners:
+                    buckets[n].append(ev)
+        elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
+            others.append(ev)
+    return buckets, others
+
+
+def team_message_events(events: list, cfg: Config, team: str,
+                        names: list = None, others: bool = True) -> list:
+    """오후 팀 알림 한 통(names 섹션 + others 면 '기타')에 실리는 일정(중복 1건).
+    names 미지정이면 오후 알림 전체(오후제외 반영). 로그 건수·미배정 점검용."""
+    names = _evening_names(team, cfg) if names is None else names
+    buckets, rest = _team_buckets(events, cfg, team, names)
+    picked = [ev for n in names for ev in buckets[n]] + (rest if others else [])
+    seen, out = set(), []
+    for ev in picked:
+        if id(ev) not in seen:
+            seen.add(id(ev))
+            out.append(ev)
+    return out
+
+
 def _lawyer_body(events: list, cfg: Config, include_deadlines: bool = True) -> str:
     """변호사 한 명 분량의 [기한]/[일정]/[휴무] 세 칸. 비어 있으면 '없음'을 적는다
     (그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게).
@@ -843,30 +904,27 @@ def build_lawyer_message(events: list, day: date, cfg: Config, lawyer: str,
 
 
 def build_team_message(events: list, day: date, cfg: Config, team: str, lead: str = None,
-                       head: str = None, mention: bool = False, day_label: str = None) -> str:
+                       head: str = None, mention: bool = False, day_label: str = None,
+                       names: list = None, others: bool = True) -> str:
     """팀 알림 — 팀 안에서 변호사별 '### ○○ 변호사' 섹션으로 나눈 메시지.
 
     mention=True 면 머리말 아랫줄에 '@everyone' 을 넣는다.
     (v1.21.0: 변호사별 개인 멘션(v1.20.0)을 되돌려 '@everyone' 으로 복귀)
     어느 변호사에도 배정되지 않지만 팀 알림 대상인 일정(공용 일정 등)은 맨 아래
-    '### 기타' 섹션에 모은다(있을 때만)."""
-    names = team_sections(team, cfg)
-    buckets = {n: [] for n in names}
-    others = []
-    for ev in events:
-        owners = lawyer_owners(ev, names, cfg)
-        if owners:
-            for n in owners:
-                buckets[n].append(ev)
-        elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
-            others.append(ev)
+    '### 기타' 섹션에 모은다(있을 때만).
+
+    names 를 주면 그 변호사 섹션만 싣는다(오후나눔 — 한 팀을 여러 통으로 나눌 때,
+    v1.32.0). 미지정이면 오후 알림 전원(오후제외 반영). others=False 면 '기타'를
+    뺀다(나눔의 마지막 통에만 싣는다)."""
+    names = _evening_names(team, cfg) if names is None else names
+    buckets, rest = _team_buckets(events, cfg, team, names)
 
     blocks = [
         format_lawyer_head(n, day, day_label) + "\n\n" + _lawyer_body(buckets[n], cfg)
         for n in names
     ]
-    if others:
-        blocks.append("### 기타\n\n" + _lawyer_body(others, cfg))
+    if others and rest:
+        blocks.append("### 기타\n\n" + _lawyer_body(rest, cfg))
 
     text = "\n\n".join(blocks).strip() or "일정 없음"
     if head is None:
@@ -887,7 +945,8 @@ def _weekend_day_block(events: list, day: date, cfg: Config) -> str:
     return "\n".join(out).rstrip()
 
 
-def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> str:
+def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str,
+                               names: list = None, others: bool = True, part: str = "") -> str:
     """휴일 묶음(토·일·월, 연휴면 그 이상) 팀 알림 — 변호사 기준으로 묶고 그
     안에서 날짜를 나눈다(v1.25.0 — 종전의 '날짜별 메시지 이어붙이기'를 대체.
     같은 변호사가 날짜마다 반복 등장해 찾아가기 헷갈리던 문제 해소).
@@ -898,19 +957,17 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> s
       그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게).
     · 변호사 안에서는 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
     · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에(있을 때만).
-    · 팀에 변호사 명단이 없고 일정도 없으면 본문은 '일정 없음' 한 줄."""
+    · 팀에 변호사 명단이 없고 일정도 없으면 본문은 '일정 없음' 한 줄.
+    · names/others 는 build_team_message 와 같다(오후제외·오후나눔, v1.32.0).
+      part 는 머리말 끝에 붙는 나눔 표시(예: ' (1/2)')."""
     days = sorted(events_by_day)
-    names = team_sections(team, cfg)
-    buckets = {n: {d: [] for d in days} for n in names}
-    others = {d: [] for d in days}
+    names = _evening_names(team, cfg) if names is None else names
+    buckets = {n: {} for n in names}
+    rest = {}
     for d in days:
-        for ev in events_by_day[d]:
-            owners = lawyer_owners(ev, names, cfg)
-            if owners:
-                for n in owners:
-                    buckets[n][d].append(ev)
-            elif event_in_team(ev, team, cfg.teams) or event_in_team_by_staff(ev, team, cfg):
-                others[d].append(ev)
+        by_lawyer, rest[d] = _team_buckets(events_by_day[d], cfg, team, names)
+        for n in names:
+            buckets[n][d] = by_lawyer[n]
 
     def block(head, by_day, empty=None):
         """변호사 한 명(또는 기타) 블록. 기간 내내 비면 empty 를 본문으로 쓰고,
@@ -921,12 +978,12 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str) -> s
         return head + "\n\n" + "\n\n".join(day_blocks)
 
     blocks = [block(format_lawyer_head(n, days[0]), buckets[n], empty="없음") for n in names]
-    other = block("### 기타", others)
+    other = block("### 기타", rest) if others else None
     if other:
         blocks.append(other)
 
     text = "\n\n".join(blocks).strip() or "일정 없음"
-    return _wrap(format_header_weekend_bundle(team, days), text, mention=False, inline=False)
+    return _wrap(format_header_weekend_bundle(team, days) + part, text, mention=False, inline=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -1045,10 +1102,11 @@ def evening_uncovered(events: list, cfg: Config,
     담당변호사 칸에 이름이 있는데도 팀 알림·개인 알림·상담 알림 모두에서
     빠지는 일정(명단 밖 이름, 퇴직자 표기 등)은 관리자가 확인할 필요가 있다.
     담당변호사가 아예 없는 일정(운영팀 공지 등)과 휴무는 의도된 미포함이므로
-    경고하지 않는다."""
+    경고하지 않는다. 팀 알림은 실제로 실리는 일정 기준 — '오후제외' 변호사
+    단독 일정처럼 섹션이 없어 빠지는 일정도 경고한다(v1.32.0)."""
     covered = set()
     for t in teams:
-        covered.update(map(id, team_events(events, cfg, t)))
+        covered.update(map(id, team_message_events(events, cfg, t)))
     for l in lawyers:
         covered.update(map(id, lawyer_events(events, cfg, l)))
     covered.update(map(id, office_meeting_events(events, cfg)))
