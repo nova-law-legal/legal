@@ -1361,6 +1361,26 @@ def test_evening_split_messages():
     assert "김수인 변호사" not in wk
 
 
+def test_team_split_messages_morning():
+    # v1.34.0 — 오전 팀 알림도 오후와 같은 변호사별·나눔 양식(문구만 '오늘 일정').
+    from transform import build_team_split_messages
+    out = build_team_split_messages([CO_EV, SUIN_EV], DAY, SPLIT_CFG, "송무2팀",
+                                    day_label="오늘 일정")
+    assert [(p, c) for p, _, c in out] == [(" (1/2)", 1), (" (2/2)", 1)]
+    assert out[0][1].startswith(
+        "📅 [송무2팀] 오늘 일정(260810, 월) (1/2)\n@everyone\n\n"
+        "### ⚖️ 김태환 변호사 오늘 일정(260810, 월)")
+    assert out[1][1].startswith("📅 [송무2팀] 오늘 일정(260810, 월) (2/2)\n\n### ⚖️ 김수인 변호사")
+    assert "조승범" in out[0][1] and "정연호" in out[1][1]
+    # 오후 경로(day_label='내일 일정')와 같은 함수 — 나눔 설정이 없으면 한 통, 표시 없음.
+    one = build_team_split_messages([GIJIL_EV], DAY, CFG, "송무1팀", day_label="내일 일정")
+    assert len(one) == 1 and one[0][0] == ""
+    assert one[0][1].startswith("📅 [송무1팀] 내일 일정(260810, 월)\n@everyone\n\n")
+    # day_label 이 없으면(--date 재발송) 머리말은 팀 이름만.
+    bare = build_team_split_messages([GIJIL_EV], DAY, CFG, "송무1팀")
+    assert bare[0][1].startswith("📅 [송무1팀](260810, 월)\n")
+
+
 def test_real_config_evening_groups():
     # 실제 teams.yaml — 1팀 2통(v1.33.0, 오후제외는 v1.32.1 해제), 2팀 2통.
     # (인사이동으로 명단이 바뀌면 이 기대값도 함께 확인할 것)

@@ -932,6 +932,26 @@ def build_team_message(events: list, day: date, cfg: Config, team: str, lead: st
     return _wrap(head, text, mention, inline=False)
 
 
+def build_team_split_messages(events: list, day: date, cfg: Config, team: str,
+                              day_label: str = None) -> list:
+    """하루치 팀 알림 전체 — '오후나눔' 묶음마다 한 통씩, [(나눔 표시, 메시지, 건수)].
+    오후(익일)·오전(오늘, v1.34.0) 팀 알림이 함께 쓴다. 나눔이면 머리말 끝에
+    ' (1/2)', @everyone 은 첫 통에만, '### 기타'는 마지막 통에만 싣는다.
+    예: '📅 [송무1팀] 오늘 일정(260810, 월) (1/2)'."""
+    groups = evening_section_groups(team, cfg)
+    lead = f"[{team}]" + (f" {day_label}" if day_label else "")
+    out = []
+    for i, names in enumerate(groups):
+        first, last = i == 0, i == len(groups) - 1
+        part = f" ({i + 1}/{len(groups)})" if len(groups) > 1 else ""
+        message = build_team_message(
+            events, day, cfg, team, head=format_header_lead(lead, day) + part,
+            day_label=day_label, mention=first, names=names, others=last,
+        )
+        out.append((part, message, len(team_message_events(events, cfg, team, names, last))))
+    return out
+
+
 def _weekend_day_block(events: list, day: date, cfg: Config) -> str:
     """묶음 안 하루치 블록 — '◆ 토요일(260815)' 날짜 소제목 + 내용 있는 칸만."""
     sec = section_bodies(events, cfg)

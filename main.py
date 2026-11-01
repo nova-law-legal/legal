@@ -34,21 +34,17 @@ from transform import (
     SECTIONS,
     WEEKDAYS,
     build_lawyer_message,
-    build_message,
     build_office_meeting_message,
     build_section_message,
-    build_team_message,
+    build_team_split_messages,
     build_team_weekend_message,
     bundle_days_from,
     collect_warnings,
     evening_section_groups,
     evening_uncovered,
-    format_header_lead,
     lawyer_events,
     load_config,
     office_meeting_events,
-    team_event_count,
-    team_events,
     team_message_events,
 )
 
@@ -100,7 +96,7 @@ EVENING_TARGETS = [
     ("팀", "송무2팀", "DISCORD_WEBHOOK_URL_SONGMU2"),
 ]
 
-# 오전 팀별 알림 — 팀 일정 전체를 [기한]/[일정]/[휴무] 한 통에 모아 전용 채널로.
+# 오전 팀별 알림 — 오후 팀 알림과 같은 변호사별·나눔 양식으로 전용 채널에(v1.34.0).
 # (기본 채널의 오전 전체 알림 3분할과 별개. 전용 웹훅이 미설정이면 건너뛴다 —
 #  기본 채널로 폴백하면 전체 알림과 중복되기 때문)
 MORNING_TEAM_TARGETS = [
@@ -203,29 +199,26 @@ def main():
             # (v1.32.0). 나눔 시 머리말 끝에 '(1/2)', @everyone 은 첫 통에만,
             # '### 기타'는 마지막 통에만 싣는다.
             outgoing = []
-            if kind == "팀":
+            if kind == "팀" and bundle and name in WEEKEND_BUNDLE_TARGETS:
                 groups = evening_section_groups(name, cfg)
                 for i, names in enumerate(groups):
                     first, last = i == 0, i == len(groups) - 1
                     part = f" ({i + 1}/{len(groups)})" if len(groups) > 1 else ""
-                    if bundle and name in WEEKEND_BUNDLE_TARGETS:
-                        # 묶음 대상은 팀 알림뿐(v1.24.0). 변호사 기준으로 묶고 그 안에서
-                        # '◆ 토요일(…)' 날짜 소제목으로 나눈다(v1.25.0). 일정 없는
-                        # 변호사는 평일처럼 이름 + '없음'(v1.28.0), 빈 날·칸은 생략.
-                        total = sum(len(team_message_events(bundle_events[d], cfg, name, names, last))
-                                    for d in bundle_days)
-                        message = ("@everyone\n" if first else "") + build_team_weekend_message(
-                            bundle_events, cfg, name, names=names, others=last, part=part)
-                        label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)
-                        count_desc = f"{label} {total}건"
-                    else:
-                        lead = f"[{name}]" + (f" {day_label}" if day_label else "")
-                        message = build_team_message(
-                            events, day, cfg, name, head=format_header_lead(lead, day) + part,
-                            day_label=day_label, mention=first, names=names, others=last,
-                        )
-                        count_desc = f"{len(team_message_events(events, cfg, name, names, last))}건"
-                    outgoing.append((name + part, message, count_desc))
+                    # 묶음 대상은 팀 알림뿐(v1.24.0). 변호사 기준으로 묶고 그 안에서
+                    # '◆ 토요일(…)' 날짜 소제목으로 나눈다(v1.25.0). 일정 없는
+                    # 변호사는 평일처럼 이름 + '없음'(v1.28.0), 빈 날·칸은 생략.
+                    total = sum(len(team_message_events(bundle_events[d], cfg, name, names, last))
+                                for d in bundle_days)
+                    message = ("@everyone\n" if first else "") + build_team_weekend_message(
+                        bundle_events, cfg, name, names=names, others=last, part=part)
+                    label = "·".join(WEEKDAYS[d.weekday()] for d in bundle_days)
+                    outgoing.append((name + part, message, f"{label} {total}건"))
+            elif kind == "팀":
+                outgoing += [
+                    (name + part, message, f"{count}건")
+                    for part, message, count in build_team_split_messages(
+                        events, day, cfg, name, day_label=day_label)
+                ]
             elif kind == "변호사":  # 개인 알림(팀 알림과 별개로 본인 일정만, [기한] 제외)
                 message = build_lawyer_message(
                     events, day, cfg, name, day_label=day_label, mention=True,
@@ -283,19 +276,19 @@ def main():
         for section in SECTIONS
     ]
 
-    # 오전 팀별 알림 — 팀 전용 채널로, 그 팀 일정 전체를 한 통에 모아 발송.
+    # 오전 팀별 알림 — 팀 전용 채널로, 오후 팀 알림처럼 변호사별 섹션으로 나누고
+    # teams.yaml '오후나눔' 묶음대로 여러 통 발송(v1.34.0. 종전엔 팀 전체 한 통).
     team_messages = [
-        (team, env_key,
-         build_message(team_events(events, cfg, team), day, cfg,
-                       lead=f"[{team}] 오늘 일정", mention=True) + "\n​",
-         team_event_count(events, cfg, team))
+        (team, env_key, [(part, message + "\n​", count) for part, message, count
+                         in build_team_split_messages(events, day, cfg, team, day_label="오늘 일정")])
         for team, env_key in MORNING_TEAM_TARGETS
     ]
 
     if args.dry_run:
         print("\n\n".join(messages))
-        for _, _, message, _ in team_messages:
-            print("\n" + message)
+        for _, _, parts in team_messages:
+            for _, message, _ in parts:
+                print("\n" + message)
         report_warnings(collect_warnings(events, cfg), "오전 알림", True)
         return
 
@@ -308,13 +301,14 @@ def main():
         send(default_webhook, message)
         print(f"[{section}] 전송 완료 ({day})")
 
-    for team, env_key, message, count in team_messages:
+    for team, env_key, parts in team_messages:
         webhook = os.environ.get(env_key)
         if not webhook:  # 기본 채널로 폴백하면 전체 알림과 중복 → 건너뜀
             print(f"[{team}] 전용 웹훅({env_key}) 미설정 — 오전 팀 알림 건너뜀")
             continue
-        send(webhook, message)
-        print(f"[{team}] 오전 팀 알림 전송 완료 ({day}, {count}건)")
+        for part, message, count in parts:
+            send(webhook, message)
+            print(f"[{team}{part}] 오전 팀 알림 전송 완료 ({day}, {count}건)")
 
     # 자동 점검 — 표기가 애매한 일정 경고(있으면 이슈 생성용 파일 기록).
     # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.
