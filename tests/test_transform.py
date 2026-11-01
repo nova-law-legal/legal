@@ -1236,27 +1236,35 @@ def test_real_config_rosters_and_staff():
             assert cfg.staff.get(name), f"{team}의 {name} 담당직원이 staff.yaml 에 없습니다"
     assert cfg.staff["천기섭"] == ["임지혜", "최수빈"]
     assert cfg.staff["김수인"] == ["김영은", "박민웅"]
-    assert cfg.staff["황인철"] == ["우서영", "임지혜"]   # 2026-09-21 입사(1팀)
-    # 2026-10-01 배치표 — 최수아(송무1·2팀 겸임) 김태환·정희소·정진실 부담당.
+    assert cfg.staff["황인철"] == ["임지혜", "최수빈"]   # 2026-11-01 배치표
+    # 2026-10-21 배치표 — 정희소·정진실·강재철 퇴사, 최수아 2팀 소속만.
     assert cfg.staff["김태환"] == ["민은선", "최수아"]
-    assert cfg.staff["정희소"] == ["임지혜", "최수아"]
-    assert cfg.staff["정진실"] == ["최수빈", "최수아"]
-    assert cfg.staff["한충호"] == ["우서영", "진정은"]
-    # 섹션 순서 = 2026-10-01 송무그룹 배치표 순서.
+    assert "정희소" not in cfg.staff and "정진실" not in cfg.staff
+    assert cfg.staff["김윤수"] == ["박민웅", "유은진"]
+    assert cfg.staff["임현진"] == ["유은진", "김영은"]
+    assert cfg.staff["박건우"] == ["유은진", "최성혜"]
+    # 2026-11-01 배치표 — 전하영 입사, 11월 중 우서영과 함께 담당(전하영/우서영).
+    assert cfg.staff["한충호"] == ["전하영", "우서영", "진정은"]
+    assert cfg.staff["박준호"] == ["진정은", "전하영", "우서영"]
+    # 섹션 순서 = 2026-11-01 송무그룹 배치표 순서.
     assert team_sections("송무1팀", cfg) == [
         "천기섭", "박정윤", "황인철", "박준호", "이종원",
-        "신이나", "정희소", "이하영", "정진실", "한충호"]
+        "신이나", "이하영", "한충호"]
     assert team_sections("송무2팀", cfg) == [
         "김태환", "채원협", "박성하", "김수인", "김정아",
         "김윤수", "임현진", "박건우"]
     leave = {"summary": "최수아 연차", "start": {"date": "2026-10-02"},
              "description": "담당(직원): 최수아,#휴가"}
-    assert lawyer_owners(leave, team_sections("송무1팀", cfg), cfg) == {"정희소", "정진실"}
+    assert lawyer_owners(leave, team_sections("송무1팀", cfg), cfg) == set()
     assert lawyer_owners(leave, team_sections("송무2팀", cfg), cfg) == {"김태환"}
     # '최수아'·'최수빈' 이름이 서로 오매칭되지 않는지.
     sb = {"summary": "최수빈 연차", "start": {"date": "2026-10-02"}, "description": ""}
-    assert lawyer_owners(sb, team_sections("송무1팀", cfg), cfg) == {"천기섭", "박정윤", "이종원", "정진실"}
+    assert lawyer_owners(sb, team_sections("송무1팀", cfg), cfg) == {"천기섭", "박정윤", "황인철", "이종원"}
     assert lawyer_owners(sb, team_sections("송무2팀", cfg), cfg) == set()
+    # 전하영·우서영 휴무는 둘 다 같은 4명 섹션에 실린다(인수인계 기간).
+    for who in ("전하영", "우서영"):
+        ev = {"summary": f"{who} 연차", "start": {"date": "2026-11-03"}, "description": ""}
+        assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"박준호", "신이나", "이하영", "한충호"}
     assert "황인철" in cfg.teams["송무1팀"]["변호사"]
     assert cfg.staff["이돈호"] == ["전체"]          # 대표 알림 [휴무]는 전 구성원(v1.30.0)
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
@@ -1354,7 +1362,7 @@ def test_evening_split_messages():
 
 
 def test_real_config_evening_groups():
-    # 실제 teams.yaml — 2026-10-15부터 1팀 정희소·정진실 오후 섹션 제외, 2팀 2통.
+    # 실제 teams.yaml — 1팀 한 통(정희소·정진실 퇴사로 오후제외 해제), 2팀 2통.
     # (인사이동으로 명단이 바뀌면 이 기대값도 함께 확인할 것)
     from transform import evening_section_groups
     cfg = load_config(CONFIG_DIR)
@@ -1362,8 +1370,7 @@ def test_real_config_evening_groups():
         ["천기섭", "박정윤", "황인철", "박준호", "이종원", "신이나", "이하영", "한충호"]]
     assert evening_section_groups("송무2팀", cfg) == [
         ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
-    # 오전 팀 분류용 명단은 그대로(정희소·정진실 포함).
-    assert "정희소" in team_sections("송무1팀", cfg) and "정진실" in team_sections("송무1팀", cfg)
+    assert cfg.teams["송무1팀"]["오후제외"] == []
 
 
 if __name__ == "__main__":
