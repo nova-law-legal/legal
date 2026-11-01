@@ -1362,12 +1362,12 @@ def test_evening_split_messages():
 
 
 def test_real_config_evening_groups():
-    # 실제 teams.yaml — 1팀 한 통(정희소·정진실 퇴사로 오후제외 해제), 2팀 2통.
+    # 실제 teams.yaml — 1팀 2통(v1.33.0, 오후제외는 v1.32.1 해제), 2팀 2통.
     # (인사이동으로 명단이 바뀌면 이 기대값도 함께 확인할 것)
     from transform import evening_section_groups
     cfg = load_config(CONFIG_DIR)
     assert evening_section_groups("송무1팀", cfg) == [
-        ["천기섭", "박정윤", "황인철", "박준호", "이종원", "신이나", "이하영", "한충호"]]
+        ["천기섭", "박정윤", "황인철"], ["박준호", "이종원", "신이나", "이하영", "한충호"]]
     assert evening_section_groups("송무2팀", cfg) == [
         ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
     assert cfg.teams["송무1팀"]["오후제외"] == []
