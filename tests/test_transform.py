@@ -1006,19 +1006,24 @@ def test_team_event_count_no_double_count():
 
 
 def test_team_message_empty_lawyer_shown():
-    # 휴일 묶음 — 기간 내내 일정 없는 변호사도 이름은 보이고 본문은 '없음'.
-    # (v1.28.0: v1.25.0의 '생략(skip_empty)'을 대체 — 평일 팀 알림과 같은 원칙)
+    # 휴일 묶음 — 기간 내내 일정 없는 변호사도 이름은 보이고, 영업일(월)은
+    # 평일 알림처럼 세 칸 '없음'. (v1.36.0: v1.28.0의 '이름 + 없음'을 대체)
     sat, sun, mon = date(2026, 8, 15), date(2026, 8, 16), date(2026, 8, 17)
     msg = build_team_weekend_message({sat: [], sun: [], mon: [DEADLINE_EV]}, CFG, "송무1팀")
     assert "### ⚖️ 천기섭 변호사\n\n◆ 월요일(260817)" in msg
-    assert "### ⚖️ 정진실 변호사\n\n없음" in msg
+    assert ("### ⚖️ 정진실 변호사\n\n◆ 월요일(260817)\n"
+            "[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음") in msg
     # 변호사 순서는 평일 팀 알림과 동일 — 명단 전원이 등장한다.
     for n in team_sections("송무1팀", CFG):
         assert f"### ⚖️ {n} 변호사" in msg
-    # 팀 전체가 3일 내내 비어도 변호사 전원이 '없음'으로 보인다.
+    # 팀 전체가 3일 내내 비어도 변호사 전원이 월요일 세 칸 '없음'으로 보인다.
     empty = build_team_weekend_message({sat: [], sun: [], mon: []}, CFG, "송무2팀")
     assert empty.startswith("📅 [송무2팀] 토·일·월 일정(260815~260817)\n\n### ⚖️ ")
-    assert empty.count("\n\n없음") == len(team_sections("송무2팀", CFG))
+    full_mon = "◆ 월요일(260817)\n[기한]\n없음\n\n[일정]\n없음\n\n[휴무]\n없음"
+    assert empty.count(full_mon) == len(team_sections("송무2팀", CFG))
+    # 휴일(토·일)은 비면 생략한다.
+    body = empty.split("\n", 1)[1]
+    assert "토요일" not in body and "일요일" not in body
     assert "일정 없음" not in empty and "### 기타" not in empty
 
 
@@ -1035,9 +1040,16 @@ def test_weekend_bundle_lawyer_block():
     assert ("### ⚖️ 천기섭 변호사\n\n"
             "◆ 토요일(260815)\n[휴무]\n임지혜 연차\n\n"
             "◆ 월요일(260817)\n[기한]\n[홍길동] 항소이유서 제출기한") in msg
-    # 일정 없는 날(일요일)과 빈 칸([일정] 등)은 생략된다.
+    # 휴일(토·일)은 일정 없는 날(일요일)과 빈 칸을 생략한다.
     assert "일요일" not in msg
-    assert "[일정]" not in msg
+    assert "◆ 토요일(260815)\n[휴무]\n임지혜 연차\n\n◆ 월요일" in msg
+    # 영업일(월)은 빈 칸도 '없음'으로 싣는다(v1.36.0).
+    assert ("◆ 월요일(260817)\n[기한]\n[홍길동] 항소이유서 제출기한\n\n"
+            "[일정]\n없음\n\n[휴무]\n없음") in msg
+    # 연휴(토·일·월 대체공휴일 → 화)면 마지막 영업일(화)만 세 칸, 빈 휴일은 생략.
+    tue = date(2026, 8, 18)
+    long = build_team_weekend_message({sat: [], sun: [], mon: [], tue: []}, CFG, "송무1팀")
+    assert "◆ 화요일(260818)\n[기한]\n없음" in long and "◆ 월요일" not in long
 
 
 # --------------------------------------------------------------------------- #

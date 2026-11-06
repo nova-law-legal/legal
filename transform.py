@@ -952,15 +952,17 @@ def build_team_split_messages(events: list, day: date, cfg: Config, team: str,
     return out
 
 
-def _weekend_day_block(events: list, day: date, cfg: Config) -> str:
-    """묶음 안 하루치 블록 — '◆ 토요일(260815)' 날짜 소제목 + 내용 있는 칸만."""
+def _weekend_day_block(events: list, day: date, cfg: Config, full: bool = False) -> str:
+    """묶음 안 하루치 블록 — '◆ 토요일(260815)' 날짜 소제목 + 내용 있는 칸만.
+    full=True(묶음 끝 영업일, v1.36.0)면 평일 알림처럼 세 칸을 모두 싣고
+    빈 칸은 '없음'."""
     sec = section_bodies(events, cfg)
     out = [f"◆ {WEEKDAYS[day.weekday()]}요일({day.strftime('%y%m%d')})"]
     for name in SECTIONS:
-        if not sec[name]:
+        if not sec[name] and not full:
             continue
         out.append(f"[{name}]")
-        out.extend(sec[name])
+        out.extend(sec[name] or ["없음"])
         out.append("")
     return "\n".join(out).rstrip()
 
@@ -972,10 +974,11 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str,
     같은 변호사가 날짜마다 반복 등장해 찾아가기 헷갈리던 문제 해소).
 
     · 변호사 섹션 순서는 평일 팀 알림과 동일(정변호사 → 수습).
-    · 묶음 기간 내내 일정 없는 변호사도 이름은 항상 보이고 본문은 '없음'
-      (v1.28.0 — 종전 '생략(skip_empty)'을 대체. 평일 팀 알림과 같은 원칙:
-      그 변호사에게 정말 아무것도 없다는 것을 눈으로 확인할 수 있게).
-    · 변호사 안에서는 일정 없는 날·빈 칸은 생략해 길이를 줄인다.
+    · 묶음 끝 영업일(bundle_days_from 의 마지막 날 — 보통 월요일)은 변호사마다
+      평일 알림처럼 [기한]/[일정]/[휴무] 세 칸을 모두 싣고 빈 칸은 '없음'
+      (v1.36.0 — 휴일 다음 날 할 일을 빠짐없이 확인할 수 있게. v1.28.0의
+      '기간 내내 일정 없는 변호사는 이름 + 없음'은 영업일 세 칸 '없음'으로 바뀐다).
+    · 휴일(토·일·공휴일)은 종전대로 일정 없는 날·빈 칸을 생략해 길이를 줄인다.
     · 어느 변호사에도 배정되지 않는 팀 일정은 맨 아래 '### 기타'에(있을 때만).
     · 팀에 변호사 명단이 없고 일정도 없으면 본문은 '일정 없음' 한 줄.
     · names/others 는 build_team_message 와 같다(오후제외·오후나눔, v1.32.0).
@@ -989,15 +992,18 @@ def build_team_weekend_message(events_by_day: dict, cfg: Config, team: str,
         for n in names:
             buckets[n][d] = by_lawyer[n]
 
-    def block(head, by_day, empty=None):
-        """변호사 한 명(또는 기타) 블록. 기간 내내 비면 empty 를 본문으로 쓰고,
-        empty 가 None 이면 블록 자체를 뺀다(기타 섹션용)."""
-        day_blocks = [_weekend_day_block(by_day[d], d, cfg) for d in days if by_day[d]]
+    workday = days[-1] if days else None  # 묶음 끝 = 휴일 다음 첫 영업일
+
+    def block(head, by_day, full_day=None):
+        """변호사 한 명(또는 기타) 블록. full_day(영업일)는 비어도 세 칸 '없음'으로
+        싣는다. full_day 가 None 이고 기간 내내 비면 블록 자체를 뺀다(기타 섹션용)."""
+        day_blocks = [_weekend_day_block(by_day[d], d, cfg, full=d == full_day)
+                      for d in days if by_day[d] or d == full_day]
         if not day_blocks:
-            return None if empty is None else head + "\n\n" + empty
+            return None
         return head + "\n\n" + "\n\n".join(day_blocks)
 
-    blocks = [block(format_lawyer_head(n, days[0]), buckets[n], empty="없음") for n in names]
+    blocks = [block(format_lawyer_head(n, days[0]), buckets[n], full_day=workday) for n in names]
     other = block("### 기타", rest) if others else None
     if other:
         blocks.append(other)
