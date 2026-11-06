@@ -1280,6 +1280,11 @@ def test_real_config_rosters_and_staff():
     ev = {"summary": "우서영 연차", "start": {"date": "2026-11-03"}, "description": ""}
     assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"황인철", "박준호", "이하영", "한충호"}
     assert "황인철" in cfg.teams["송무1팀"]["변호사"]
+    # 2026-11-06 수습 구분 폐지(배치표 2026-11-01~) — 전원 정변호사, 배치표 순서
+    assert cfg.teams["송무1팀"]["변호사"] == ["천기섭", "박정윤", "황인철", "박준호", "이종원", "이하영", "한충호"]
+    assert cfg.teams["송무2팀"]["변호사"] == ["김태환", "채원협", "박성하", "김수인", "김정아",
+                                         "김윤수", "임현진", "박건우"]
+    assert cfg.teams["송무1팀"]["수습"] == [] and cfg.teams["송무2팀"]["수습"] == []
     assert cfg.staff["이돈호"] == ["전체"]          # 대표 알림 [휴무]는 전 구성원(v1.30.0)
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
     for team in ("송무1팀", "송무2팀"):
