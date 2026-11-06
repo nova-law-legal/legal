@@ -250,7 +250,9 @@ Lawware(기일관리) → Google Calendar 에 동기화된 일정을, 매일 **�
 2. 저장소 **Settings → Secrets and variables → Actions → New repository secret** 으로 등록:
    - `GOOGLE_SERVICE_ACCOUNT_JSON` : 3-1에서 받은 JSON **파일 내용 전체**
    - `GOOGLE_CALENDAR_ID` : 캘린더 ID (여러 개면 쉼표/줄바꿈으로 구분해 모두 입력)
+     - 현재 운영: **'송무그룹' 캘린더 하나**(회사 전체 일정이 모두 모임, v1.35.0)
    - `GOOGLE_SERVICE_ACCOUNT_JSON_2` / `GOOGLE_CALENDAR_ID_2` : 두 번째 구글 계정의 키·캘린더 ID (계정이 하나면 생략)
+     - 코드는 계정 여러 개를 지원하지만, v1.35.0부터 워크플로는 계정1만 넘긴다.
    - `DISCORD_WEBHOOK_URL` : 기본 채널 웹훅 URL(오전 전체 알림 + 오후 이돈호 개인·상담 알림)
    - `DISCORD_WEBHOOK_URL_SONGMU1` / `_SONGMU2` : 송무1·2팀 전용 채널 웹훅
      (오전 팀 알림 + 오후 팀 알림. 미설정 시 오후 팀 알림은 기본 채널로 폴백,

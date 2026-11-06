@@ -37,9 +37,8 @@ jobs:
       - name: Send next-day schedule to Discord (이돈호 개인·상담 → 기본 채널, 송무1·2팀 → 팀 채널)
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          # 캘린더는 '송무그룹' 하나(회사 전체 일정) — v1.35.0
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
-          GOOGLE_SERVICE_ACCOUNT_JSON_2: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_2 }}
-          GOOGLE_CALENDAR_ID_2: ${{ secrets.GOOGLE_CALENDAR_ID_2 }}
           # 기본 채널 — 이돈호 개인 알림 + 사무실(1006호·404호·인천) 상담 알림
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # 팀별 전용 채널 웹훅(없으면 기본 DISCORD_WEBHOOK_URL 로 폴백)
