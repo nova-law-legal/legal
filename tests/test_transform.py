@@ -1249,7 +1249,8 @@ def test_real_config_rosters_and_staff():
     # 섹션 순서 = 2026-11-01 송무그룹 배치표 순서.
     assert team_sections("송무1팀", cfg) == [
         "천기섭", "박정윤", "황인철", "박준호", "이종원",
-        "신이나", "이하영", "한충호"]
+        "이하영", "한충호"]
+    assert "신이나" not in cfg.staff                  # 2026-11-06 퇴사
     assert team_sections("송무2팀", cfg) == [
         "김태환", "채원협", "박성하", "김수인", "김정아",
         "김윤수", "임현진", "박건우"]
@@ -1261,11 +1262,11 @@ def test_real_config_rosters_and_staff():
     sb = {"summary": "최수빈 연차", "start": {"date": "2026-10-02"}, "description": ""}
     assert lawyer_owners(sb, team_sections("송무1팀", cfg), cfg) == {"천기섭", "박정윤", "황인철", "이종원"}
     assert lawyer_owners(sb, team_sections("송무2팀", cfg), cfg) == set()
-    # 전하영 휴무는 4명, 우서영 휴무는 황인철까지 5명 섹션에 실린다(인수인계 기간).
+    # 전하영 휴무는 3명, 우서영 휴무는 황인철까지 4명 섹션에 실린다(인수인계 기간).
     ev = {"summary": "전하영 연차", "start": {"date": "2026-11-03"}, "description": ""}
-    assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"박준호", "신이나", "이하영", "한충호"}
+    assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"박준호", "이하영", "한충호"}
     ev = {"summary": "우서영 연차", "start": {"date": "2026-11-03"}, "description": ""}
-    assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"황인철", "박준호", "신이나", "이하영", "한충호"}
+    assert lawyer_owners(ev, team_sections("송무1팀", cfg), cfg) == {"황인철", "박준호", "이하영", "한충호"}
     assert "황인철" in cfg.teams["송무1팀"]["변호사"]
     assert cfg.staff["이돈호"] == ["전체"]          # 대표 알림 [휴무]는 전 구성원(v1.30.0)
     # mentions.yaml — 모든 변호사(+이돈호)의 멘션 계정명이 등록돼 있는지.
@@ -1274,7 +1275,7 @@ def test_real_config_rosters_and_staff():
             assert cfg.mentions.get(name, {}).get("계정명"), \
                 f"{name} 멘션 계정명이 mentions.yaml 에 없습니다"
     assert cfg.mentions["이돈호"]["계정명"] == "이돈호 변호사"
-    for name in ("천기섭", "신이나", "임현진"):
+    for name in ("천기섭", "임현진"):
         assert cfg.mentions[name]["계정명"] == f"{name} 변호사"
 
 
@@ -1388,7 +1389,7 @@ def test_real_config_evening_groups():
     from transform import evening_section_groups
     cfg = load_config(CONFIG_DIR)
     assert evening_section_groups("송무1팀", cfg) == [
-        ["천기섭", "박정윤", "황인철"], ["박준호", "이종원", "신이나", "이하영", "한충호"]]
+        ["천기섭", "박정윤", "황인철"], ["박준호", "이종원", "이하영", "한충호"]]
     assert evening_section_groups("송무2팀", cfg) == [
         ["김태환", "채원협", "박성하"], ["김수인", "김정아", "김윤수", "임현진", "박건우"]]
     assert cfg.teams["송무1팀"]["오후제외"] == []
