@@ -128,16 +128,41 @@ def _normalize_mention(v):
     }
 
 
+def _names(v):
+    """'임지혜' / ['전하영', '우서영'] / None → 이름 리스트."""
+    if v is None:
+        return []
+    return [str(n).strip() for n in (v if isinstance(v, list) else [v]) if str(n).strip()]
+
+
+def _normalize_staff_roles(v):
+    """staff.yaml 한 변호사의 값 → {'주담당': [...], '부담당': [...]} (담당직원 메일 수신자용).
+    '전체'(대표변호사)처럼 주·부담당 구분이 없는 값은 None."""
+    if isinstance(v, dict) and ("주담당" in v or "부담당" in v):
+        return {"주담당": _names(v.get("주담당")), "부담당": _names(v.get("부담당"))}
+    if isinstance(v, list):
+        return {"주담당": _names(v), "부담당": []}
+    return None
+
+
 class Config:
     """장소 약칭 예외표·팀별 변호사 명단·변호사별 담당직원 명단·멘션 설정 묶음."""
 
     def __init__(self, locations: dict, teams: dict = None, staff: dict = None,
-                 mentions: dict = None):
+                 mentions: dict = None, staff_emails: dict = None):
         self.locations = locations or {}
         # 팀명 -> {'변호사': 정변호사, '수습': 수습변호사, '태그': 담당직원 태그 매칭 여부}
         self.teams = {t: _normalize_team(v) for t, v in (teams or {}).items()}
         # 변호사명 -> [담당직원…]  (팀별 알림의 변호사별 [휴무] 배정에 사용)
         self.staff = {k: _normalize_staff(v) for k, v in (staff or {}).items()}
+        # 변호사명 -> {'주담당': [...], '부담당': [...]}  (점검 항목 담당직원 메일, v1.38.0)
+        self.staff_roles = {
+            k: r for k, r in ((k, _normalize_staff_roles(v)) for k, v in (staff or {}).items()) if r
+        }
+        # 직원명 -> 메일 주소 (staff_emails.yaml, v1.38.0)
+        self.staff_emails = {
+            str(k).strip(): str(v).strip() for k, v in (staff_emails or {}).items() if v
+        }
         # 변호사명 -> {'계정명', 'id'}  (오후 알림의 '@변호사' 멘션에 사용)
         self.mentions = {k: _normalize_mention(v) for k, v in (mentions or {}).items()}
 
@@ -155,6 +180,7 @@ def load_config(config_dir: str) -> Config:
         _load("teams.yaml", required=False),
         _load("staff.yaml", required=False),
         _load("mentions.yaml", required=False),
+        _load("staff_emails.yaml", required=False),
     )
 
 
@@ -1076,6 +1102,75 @@ def build_office_meeting_message(events: list, day: date, cfg: Config,
 _OFFICE_HINTS = ("1006", "404", "인천", "학익", "아스테리움", "사무소")
 
 
+WARN_MULTI_ATTENDEES = "출석변호사 복수 표기"
+WARN_VISIT_NUMBER = "접견번호 미검출"
+WARN_MEETING_PLACE = "상담 장소 없음"
+WARN_OFFICE_ALIAS = "사무실 별칭 미등록 의심"
+
+# 담당직원 메일로도 보내는 점검 항목 — 직원이 로웨어 일정 입력을 고치면 해결되는 것 (v1.38.0).
+# 나머지(상담 장소·사무실 별칭·오후 알림 미배정)는 설정 확인이 필요해 관리자 보고에만 남긴다.
+STAFF_WARN_KINDS = (WARN_MULTI_ATTENDEES, WARN_VISIT_NUMBER)
+
+_WEEKDAYS = "월화수목금토일"
+
+
+def _event_when(ev) -> str:
+    """일정 시작 → '11/17(화) 10:40' (종일 일정은 시각 없이). 알 수 없으면 ''."""
+    start = ev.get("start") or {}
+    raw = start.get("dateTime") or start.get("date") or ""
+    try:
+        d = date.fromisoformat(raw[:10])
+    except ValueError:
+        return ""
+    hhmm = f" {raw[11:16]}" if start.get("dateTime") and len(raw) >= 16 else ""
+    return f"{d.month}/{d.day}({_WEEKDAYS[d.weekday()]}){hhmm}"
+
+
+def collect_warning_items(events: list, cfg: Config) -> list:
+    """collect_warnings 와 같은 점검을 하되, 항목마다 담당직원 메일 배정에 필요한
+    정보를 함께 돌려준다 → [{'kind', 'text', 'lawyers', 'when'}, ...] (v1.38.0).
+    lawyers = 그 일정의 담당변호사(없으면 출석변호사 표기) — 담당직원 메일 수신 기준."""
+    items = []
+    for ev in events:
+        if is_leave(ev):
+            continue
+        title = (ev.get("summary") or "").strip()
+        fields = parse_description(ev.get("description", ""))
+        owners = _responsible_names(fields)
+
+        def add(kind, text, lawyers=None):
+            items.append({"kind": kind, "text": f"{kind}: {text}",
+                          "lawyers": list(lawyers if lawyers is not None else owners),
+                          "when": _event_when(ev)})
+
+        if is_full_gijil(fields) and not is_staff_errand(ev, fields):
+            names = _gijil_attendees(fields)
+            if len(names) >= 2:
+                add(WARN_MULTI_ATTENDEES,
+                    f"'{title}' — '{', '.join(names)}' 가 함께 "
+                    "적혀 있어 실제 출석자가 전원인지 일부인지 판단하기 어렵습니다. "
+                    "일부만 출석한다면 캘린더의 출석변호사 칸을 정리해 주세요.",
+                    owners or names)
+        if is_visit(ev) and ("스마트" in title or "화상" in title) \
+                and not _visit_number_sub(fields, ev.get("description", "")):
+            add(WARN_VISIT_NUMBER,
+                f"'{title}' — 설명에 예약번호가 없거나 형식을 "
+                "인식하지 못했습니다. 캘린더 설명에 번호를 확인해 주세요.",
+                owners or _attendee_names(fields.get("출석변호사")))
+        if is_meeting(ev):
+            place = meeting_place(ev, cfg)
+            if not place:
+                add(WARN_MEETING_PLACE,
+                    f"'{title}' — 장소(구분)가 비어 있어 "
+                    "사무실 상담 알림에서 제외됩니다.")
+            elif place not in OFFICE_MEETING_PLACES and any(h in place for h in _OFFICE_HINTS):
+                add(WARN_OFFICE_ALIAS,
+                    f"'{title}' 의 장소 '{place}' — "
+                    "자사 사무실이라면 config/locations.yaml 에 별칭을 추가해야 "
+                    "상담 알림에 포함됩니다.")
+    return items
+
+
 def collect_warnings(events: list, cfg: Config) -> list:
     """표기·분류가 애매해질 수 있는 일정을 찾아 경고 문구 리스트로 돌려준다.
 
@@ -1085,40 +1180,77 @@ def collect_warnings(events: list, cfg: Config) -> list:
       locations.yaml 에 등록돼 있지 않아 상담 알림에서 빠질 수 있는 경우.
     · 정식 기일의 출석변호사가 2명 이상 표기되어, 실제 출석자가 전원인지
       일부인지 판단하기 어려운 경우(수령·복사 등 직원 수행 일정은 제외)."""
-    warns = []
-    for ev in events:
-        if is_leave(ev):
+    return [it["text"] for it in collect_warning_items(events, cfg)]
+
+
+def staff_addresses(lawyer: str, cfg: Config):
+    """변호사 → (받는 사람 [(이름, 주소)], 참조 [(이름, 주소)]) — staff.yaml 주담당/부담당
+    + staff_emails.yaml. 주담당 주소가 없으면 부담당을 받는 사람으로 올린다. (v1.38.0)"""
+    roles = cfg.staff_roles.get(lawyer)
+    if not roles:
+        return [], []
+    mail = cfg.staff_emails
+    to = [(n, mail[n]) for n in roles["주담당"] if n in mail]
+    cc = [(n, mail[n]) for n in roles["부담당"]
+          if n in mail and n not in roles["주담당"]]
+    if not to:
+        to, cc = cc, []
+    return to, cc
+
+
+def staff_warning_mails(items: list, cfg: Config):
+    """점검 항목 중 STAFF_WARN_KINDS 를 담당변호사의 직원에게 보낼 메일로 묶는다 (v1.38.0).
+
+    · 받는 사람 = 주담당, 참조 = 부담당. 공동담당이면 담당변호사 모두의 직원에게.
+    · 받는 사람·참조가 같은 변호사들(예: 천기섭·박정윤 → 임지혜/최수빈)은 한 통으로 합치고,
+      같은 항목은 한 번만 싣는다.
+    → (mails, unrouted)
+      mails    = [{'lawyers': [...], 'to': [(이름, 주소)], 'cc': [...], 'items': [항목…]}]
+      unrouted = 담당직원 메일을 받을 사람이 없는 STAFF_WARN_KINDS 항목(관리자 보고에만)."""
+    mails, unrouted = {}, []
+    for it in items:
+        if it["kind"] not in STAFF_WARN_KINDS:
             continue
-        title = (ev.get("summary") or "").strip()
-        fields = parse_description(ev.get("description", ""))
-        if is_full_gijil(fields) and not is_staff_errand(ev, fields):
-            names = _gijil_attendees(fields)
-            if len(names) >= 2:
-                warns.append(
-                    f"출석변호사 복수 표기: '{title}' — '{', '.join(names)}' 가 함께 "
-                    "적혀 있어 실제 출석자가 전원인지 일부인지 판단하기 어렵습니다. "
-                    "일부만 출석한다면 캘린더의 출석변호사 칸을 정리해 주세요."
-                )
-        if is_visit(ev) and ("스마트" in title or "화상" in title) \
-                and not _visit_number_sub(fields, ev.get("description", "")):
-            warns.append(
-                f"접견번호 미검출: '{title}' — 설명에 예약번호가 없거나 형식을 "
-                "인식하지 못했습니다. 캘린더 설명에 번호를 확인해 주세요."
-            )
-        if is_meeting(ev):
-            place = meeting_place(ev, cfg)
-            if not place:
-                warns.append(
-                    f"상담 장소 없음: '{title}' — 장소(구분)가 비어 있어 "
-                    "사무실 상담 알림에서 제외됩니다."
-                )
-            elif place not in OFFICE_MEETING_PLACES and any(h in place for h in _OFFICE_HINTS):
-                warns.append(
-                    f"사무실 별칭 미등록 의심: '{title}' 의 장소 '{place}' — "
-                    "자사 사무실이라면 config/locations.yaml 에 별칭을 추가해야 "
-                    "상담 알림에 포함됩니다."
-                )
-    return warns
+        routed = False
+        for lawyer in it["lawyers"]:
+            to, cc = staff_addresses(lawyer, cfg)
+            if not to:
+                continue
+            routed = True
+            m = mails.setdefault((tuple(to), tuple(cc)),
+                                 {"lawyers": [], "to": to, "cc": cc, "items": []})
+            if lawyer not in m["lawyers"]:
+                m["lawyers"].append(lawyer)
+            if it not in m["items"]:
+                m["items"].append(it)
+        if not routed:
+            unrouted.append(it)
+    return list(mails.values()), unrouted
+
+
+def build_staff_warning_mail(mail: dict, label: str):
+    """담당직원 메일 1통 → (제목, 본문). label = '오전 알림' / '오후(익일) 알림'."""
+    who = "·".join(mail["lawyers"])
+    n = len(mail["items"])
+    subject = f"[일정 점검] {who} 변호사 일정 — 확인 요청 {n}건"
+    lines = [
+        f"{who} 변호사님 담당 일정 중 자동 점검에서 확인이 필요한 사항이 있어 알려드립니다.",
+        f"({label}은 파악된 내용대로 이미 발송되었습니다. 아래 일정을 로웨어에서 확인·보완해 주세요.)",
+        "",
+    ]
+    for it in mail["items"]:
+        when = f"[{it['when']}] " if it.get("when") else ""
+        lines.append(f"- {when}{it['text']}")
+    lines += ["", "※ 기일 알림 봇이 자동으로 보낸 메일입니다. 수정하면 다음 알림부터 반영됩니다."]
+    return subject, "\n".join(lines) + "\n"
+
+
+def staff_mail_label(mail: dict) -> str:
+    """관리자 보고용 한 줄 — '천기섭 변호사 → 임지혜 (참조 최수빈) 2건'."""
+    who = "·".join(mail["lawyers"])
+    to = ", ".join(n for n, _ in mail["to"])
+    cc = f" (참조 {', '.join(n for n, _ in mail['cc'])})" if mail["cc"] else ""
+    return f"{who} 변호사 → {to}{cc} {len(mail['items'])}건"
 
 
 def evening_uncovered(events: list, cfg: Config,

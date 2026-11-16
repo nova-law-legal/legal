@@ -1412,6 +1412,128 @@ def test_real_config_evening_groups():
     assert cfg.teams["송무1팀"]["오후제외"] == []
 
 
+# --------------------------------------------------------------------------- #
+# v1.38.0 — 점검 항목 담당직원 메일 (받는 사람 주담당, 참조 부담당)
+# --------------------------------------------------------------------------- #
+from transform import (  # noqa: E402
+    build_staff_warning_mail,
+    collect_warning_items,
+    staff_addresses,
+    staff_mail_label,
+    staff_warning_mails,
+)
+
+_MULTI = {"summary": "김용민 [변론기일]",
+          "start": {"dateTime": "2026-08-10T10:40:00+09:00"},
+          "description": "사건번호: 1\n의뢰인: 김용민\n담당변호사: 박정윤,이종원\n"
+                         "출석변호사: ▲박정윤,▲이종원\n내용: 변론기일"}
+_SMART = {"summary": "[남승규] 스마트접견",
+          "start": {"dateTime": "2026-08-11T11:00:00+09:00"},
+          "description": "담당(변호사): 김수인"}
+
+
+def test_staff_warning_items_and_routing():
+    cfg = load_config(CONFIG_DIR)
+    donho_visit = dict(_SMART, summary="[정다혜] 화상접견", description="담당(변호사): 이돈호")
+    no_place = {"summary": "[회의] [김동현]방문상담", "description": "담당(변호사): 천기섭"}
+    items = collect_warning_items([_MULTI, _SMART, donho_visit, no_place], cfg)
+    assert [it["kind"] for it in items] == [
+        "출석변호사 복수 표기", "접견번호 미검출", "접견번호 미검출", "상담 장소 없음"]
+    assert items[0]["lawyers"] == ["박정윤", "이종원"] and items[0]["when"] == "8/10(월) 10:40"
+    # collect_warnings 문구는 종전과 같다(관리자 보고·이슈)
+    assert collect_warnings([_MULTI], cfg)[0].startswith("출석변호사 복수 표기: '김용민 [변론기일]'")
+
+    mails, unrouted = staff_warning_mails(items, cfg)
+    # 박정윤·이종원은 담당직원이 같아(최수빈/임지혜) 한 통으로, 항목도 한 번만
+    assert len(mails) == 2
+    assert mails[0]["lawyers"] == ["박정윤", "이종원"] and len(mails[0]["items"]) == 1
+    assert [n for n, _ in mails[0]["to"]] == ["최수빈"] and [n for n, _ in mails[0]["cc"]] == ["임지혜"]
+    assert [n for n, _ in mails[1]["to"]] == ["김영은"] and [n for n, _ in mails[1]["cc"]] == ["박민웅"]
+    # 대표(이돈호) 단독 접견은 담당직원 메일 없음 → 관리자 보고에만. 상담 장소는 애초에 대상 아님
+    assert [it["kind"] for it in unrouted] == ["접견번호 미검출"]
+
+
+def test_staff_warning_mail_co_lawyers_each_staff():
+    # 공동담당 — 담당직원이 다르면 담당변호사마다 따로 (04. 기일예정알림 v1.17 과 같은 방침)
+    cfg = load_config(CONFIG_DIR)
+    ev = dict(_MULTI, description=_MULTI["description"].replace("박정윤,이종원", "천기섭,김태환"))
+    mails, _ = staff_warning_mails(collect_warning_items([ev], cfg), cfg)
+    assert [m["lawyers"] for m in mails] == [["천기섭"], ["김태환"]]
+    assert [n for n, _ in mails[1]["to"]] == ["민은선"]
+
+
+def test_staff_warning_mail_text():
+    cfg = load_config(CONFIG_DIR)
+    mails, _ = staff_warning_mails(collect_warning_items([_SMART], cfg), cfg)
+    subject, body = build_staff_warning_mail(mails[0], "오후(익일) 알림")
+    assert subject == "[일정 점검] 김수인 변호사 일정 — 확인 요청 1건"
+    assert body.startswith("김수인 변호사님 담당 일정 중 자동 점검에서")
+    assert "- [8/11(화) 11:00] 접견번호 미검출: '[남승규] 스마트접견'" in body
+    assert staff_mail_label(mails[0]) == "김수인 변호사 → 김영은 (참조 박민웅) 1건"
+
+
+def test_staff_addresses_fallbacks():
+    cfg = Config(locations={}, staff={"갑": {"주담당": "없는사람", "부담당": "을직원"},
+                                      "대표": "전체", "병": ["정직원"]},
+                 staff_emails={"을직원": "b@x", "정직원": "d@x"})
+    assert staff_addresses("갑", cfg) == ([("을직원", "b@x")], [])   # 주담당 주소 없으면 부담당이 받는 사람
+    assert staff_addresses("대표", cfg) == ([], [])
+    assert staff_addresses("병", cfg) == ([("정직원", "d@x")], [])
+    assert staff_addresses("명단밖", cfg) == ([], [])
+
+
+def test_real_config_staff_emails():
+    # 송무 변호사의 주·부담당 직원은 모두 메일 주소가 있어야 한다(입사 시 staff_emails.yaml 누락 방지)
+    cfg = load_config(CONFIG_DIR)
+    for team in ("송무1팀", "송무2팀"):
+        for name in team_sections(team, cfg):
+            roles = cfg.staff_roles.get(name)
+            assert roles, f"{name} 주·부담당이 staff.yaml 에 없습니다"
+            for s in roles["주담당"] + roles["부담당"]:
+                assert s in cfg.staff_emails, f"{name} 담당직원 {s} 의 메일이 staff_emails.yaml 에 없습니다"
+    assert cfg.staff_roles["황인철"] == {"주담당": ["임지혜", "우서영"], "부담당": ["최수빈"]}
+    assert "이돈호" not in cfg.staff_roles
+
+
+def test_notify_staff_retries_once_on_disconnect():
+    import smtplib
+    import notify_staff
+
+    calls = {"n": 0, "sent": 0}
+
+    class Fake:
+        def __init__(self, plan):
+            self.plan = plan
+
+        def __call__(self, host, port, timeout=None):
+            calls["n"] += 1
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, u, p):
+            pass
+
+        def sendmail(self, frm, rcpts, raw):
+            err = self.plan.pop(0) if self.plan else None
+            if err:
+                raise err
+            calls["sent"] += 1
+            return {}
+
+    m = {"subject": "s", "text": "t", "to": ["a@x"], "cc": ["b@x"]}
+    drop = smtplib.SMTPServerDisconnected("Connection unexpectedly closed: timed out")
+    assert notify_staff.send_one("u@x", "p", m, Fake([drop])) is None
+    assert calls == {"n": 2, "sent": 1}
+    calls.update(n=0, sent=0)
+    err = notify_staff.send_one("u@x", "p", m, Fake([smtplib.SMTPDataError(550, b"no")]))
+    assert err.startswith("SMTPDataError") and calls == {"n": 1, "sent": 0}  # 거부는 재시도 없음
+
+
 if __name__ == "__main__":
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

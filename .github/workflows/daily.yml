@@ -54,6 +54,8 @@ jobs:
 
       # 자동 점검 경고 보고 — 이슈(이력용) + 관리자 메일(통지용, Gmail SMTP).
       # 메일은 GMAIL_APP_PASSWORD 시크릿이 등록된 경우에만 발송된다.
+      # (v1.38.0) 출석변호사 복수 표기·접견번호 미검출은 담당변호사의 직원에게도 메일
+      # (staff-warnings.json → notify_staff.py). 그 발송 결과가 관리자 보고에 덧붙는다.
       - name: Report ambiguous-data warnings (issue + mail)
         if: success()
         env:
@@ -63,6 +65,9 @@ jobs:
           MAIL_TO: starlit@novalaw.kr
         run: |
           if [ -s run-warnings.md ]; then
+            if [ -s staff-warnings.json ]; then
+              python notify_staff.py staff-warnings.json run-warnings.md || true
+            fi
             echo "" >> run-warnings.md
             echo "실행 로그: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> run-warnings.md
             gh issue create -R "$GITHUB_REPOSITORY" \

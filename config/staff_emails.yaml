@@ -1,0 +1,23 @@
+# 담당직원 메일 주소 — 자동 점검 중 일정 입력 보완이 필요한 항목(출석변호사 복수 표기,
+# 접견번호 미검출)을 그 일정 담당변호사의 직원에게 메일로 보낼 때 쓴다 (v1.38.0).
+#   받는 사람 = staff.yaml 의 주담당, 참조 = 부담당.
+#
+# ※ 원본은 11. Organization 조직도(03. Deploy/index.html 의 rawMembers 직원 email).
+#   04. 기일예정알림 config/recipients.yaml 의 '직원메일'과 같은 내용 — 입사·퇴사 시 함께 고칠 것.
+# ※ 여기 없는 직원은 메일을 받지 않는다(그 항목은 관리자 보고에만 남는다).
+#
+# 2026-11-16 작성 — 조직도 v17 = 송무그룹 배치표 2026-11-06 기준
+
+# 송무1팀
+임지혜: imjihye@novalaw.kr
+최수빈: stella@novalaw.kr
+진정은: ko84951@novalaw.kr
+전하영: hyjeon@novalaw.kr
+우서영: cws02114@novalaw.kr
+# 송무2팀
+민은선: seon@novalaw.kr
+최수아: sachoe@novalaw.kr
+최성혜: hye4862@novalaw.kr
+유은진: ejyu@novalaw.kr
+박민웅: mupark@novalaw.kr
+김영은: kye3328@novalaw.kr

@@ -16,6 +16,7 @@
 """
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -38,13 +39,16 @@ from transform import (
     build_section_message,
     build_team_split_messages,
     build_team_weekend_message,
+    build_staff_warning_mail,
     bundle_days_from,
-    collect_warnings,
+    collect_warning_items,
     evening_section_groups,
     evening_uncovered,
     lawyer_events,
     load_config,
     office_meeting_events,
+    staff_mail_label,
+    staff_warning_mails,
     team_message_events,
 )
 
@@ -53,6 +57,32 @@ CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 # 자동 점검 경고를 적는 파일 — 내용이 있으면 워크플로가 GitHub 이슈를 생성해
 # 관리자(GitHub 알림 메일)에게 통지한다. (.gitignore 대상)
 WARNINGS_FILE = "run-warnings.md"
+# (v1.38.0) 담당직원에게 보낼 점검 메일 — 워크플로가 notify_staff.py 로 발송한다. (.gitignore 대상)
+STAFF_WARNINGS_FILE = "staff-warnings.json"
+
+
+def report_checks(items: list, cfg, label: str, dry_run: bool):
+    """점검 결과 보고 — 관리자 보고(report_warnings, 전 항목) + 담당직원 메일 파일.
+    items = collect_warning_items 결과(+ 'tag': 관리자 보고용 날짜 머리표)."""
+    report_warnings([it.get("tag", "") + it["text"] for it in items], label, dry_run)
+    mails, _ = staff_warning_mails(items, cfg)
+    if dry_run:
+        for m in mails:
+            subject, body = build_staff_warning_mail(m, label)
+            print(f"\n[담당직원 메일] {staff_mail_label(m)}\n[제목] {subject}\n{body}",
+                  file=sys.stderr)
+        return
+    if os.path.exists(STAFF_WARNINGS_FILE):
+        os.remove(STAFF_WARNINGS_FILE)  # 로컬 실행 시 지난 파일이 다시 발송되지 않게
+    if not mails:
+        return
+    out = []
+    for m in mails:
+        subject, body = build_staff_warning_mail(m, label)
+        out.append({"label": staff_mail_label(m), "subject": subject, "text": body,
+                    "to": [a for _, a in m["to"]], "cc": [a for _, a in m["cc"]]})
+    with open(STAFF_WARNINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
 
 
 def report_warnings(warns: list, label: str, dry_run: bool):
@@ -251,17 +281,18 @@ def main():
             return
         try:
             check = bundle_events if bundle else {day: events}
-            warns = []
+            items = []
             for d in sorted(check):
                 tag = f"[{d.strftime('%m/%d')}] "
-                warns += [tag + w for w in collect_warnings(check[d], cfg)]
-                warns += [
-                    tag + f"오후 알림 미배정: '{(ev.get('summary') or '').strip()}' — "
-                    "담당변호사가 있으나 팀·개인·상담 알림 어디에도 실리지 않았습니다"
-                    "(명단 밖 이름 여부 확인 필요, 오전 전체 알림에는 표시됨)."
+                items += [dict(it, tag=tag) for it in collect_warning_items(check[d], cfg)]
+                items += [
+                    {"kind": "오후 알림 미배정", "tag": tag, "lawyers": [], "when": "",
+                     "text": f"오후 알림 미배정: '{(ev.get('summary') or '').strip()}' — "
+                     "담당변호사가 있으나 팀·개인·상담 알림 어디에도 실리지 않았습니다"
+                     "(명단 밖 이름 여부 확인 필요, 오전 전체 알림에는 표시됨)."}
                     for ev in evening_uncovered(check[d], cfg)
                 ]
-            report_warnings(warns, "오후(익일) 알림", args.dry_run)
+            report_checks(items, cfg, "오후(익일) 알림", args.dry_run)
         except Exception as e:  # noqa: BLE001 — 점검 실패는 발송 실패가 아니다
             print(f"[자동 점검] 점검 중 오류(발송에는 영향 없음): {e}", file=sys.stderr)
         return
@@ -289,7 +320,7 @@ def main():
         for _, _, parts in team_messages:
             for _, message, _ in parts:
                 print("\n" + message)
-        report_warnings(collect_warnings(events, cfg), "오전 알림", True)
+        report_checks(collect_warning_items(events, cfg), cfg, "오전 알림", True)
         return
 
     if not default_webhook:
@@ -313,7 +344,7 @@ def main():
     # 자동 점검 — 표기가 애매한 일정 경고(있으면 이슈 생성용 파일 기록).
     # 발송은 위에서 이미 끝났으므로, 점검 오류가 발송 성공에 영향 주지 않게 격리.
     try:
-        report_warnings(collect_warnings(events, cfg), "오전 알림", args.dry_run)
+        report_checks(collect_warning_items(events, cfg), cfg, "오전 알림", args.dry_run)
     except Exception as e:  # noqa: BLE001 — 점검 실패는 발송 실패가 아니다
         print(f"[자동 점검] 점검 중 오류(발송에는 영향 없음): {e}", file=sys.stderr)
 

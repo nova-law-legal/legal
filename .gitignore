@@ -12,3 +12,6 @@ venv/
 
 # 자동 점검 경고(발송 시 생성, 워크플로가 이슈로 옮긴 뒤 폐기)
 run-warnings.md
+
+# 담당직원 점검 메일(v1.38.0) 발송 대기 파일 — *.json 으로도 제외되지만 명시
+staff-warnings.json
